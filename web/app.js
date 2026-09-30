@@ -165,6 +165,7 @@ function row(j) {
       <span class="dir ${dir > 0 ? "up" : dir < 0 ? "down" : "flat"}" aria-label="${LABEL[j.effect]}">${dir > 0 ? "▲" : dir < 0 ? "▼" : "·"}</span>
       <span class="q">${esc(j.market.question)}<span class="fx">
         ${a ? `<span class="al">${a.kind === "stale_price" ? "Stale price" : "Mover"}</span>` : ""}
+        ${a?.why ? `<span class="why">${esc(a.why)}</span>` : ""}
         <span>${LABEL[j.effect]}${j.market.outcomes && j.market.outcomes[0] !== "Yes" ? ` (YES = ${esc(j.market.outcomes[0])})` : ""}</span>
         <span>conf ${(j.effect_conf ?? 0).toFixed(2)}</span>
         ${j.same_period != null && j.same_period < 0.5 ? `<span class="warn" title="Jev thinks the news is about a different date/meeting">timing mismatch</span>` : ""}

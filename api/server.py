@@ -85,7 +85,7 @@ def _feed_item(conn: sqlite3.Connection, headline_id: int) -> dict | None:
         "SELECT j.*, m.question AS market_question, m.url AS market_url, m.rules AS market_rules,"
         " m.end_date AS market_end_date, m.outcomes AS market_outcomes, m.is_game AS market_is_game,"
         " m.yes_price AS market_yes_price, a.id AS alert_id, a.kind AS alert_kind,"
-        " a.direction AS alert_direction, a.price_at_alert AS alert_price, a.created_at AS alert_at FROM judgments j"
+        " a.direction AS alert_direction, a.price_at_alert AS alert_price, a.created_at AS alert_at, a.why AS alert_why FROM judgments j"
         " JOIN markets m ON m.id=j.market_id"
         " LEFT JOIN alerts a ON a.judgment_id=j.id"
         " WHERE j.headline_id=? ORDER BY j.relevant DESC, j.id",
@@ -122,6 +122,7 @@ def _feed_item(conn: sqlite3.Connection, headline_id: int) -> dict | None:
                         "direction": row["alert_direction"],
                         "price_at_alert": row["alert_price"],
                         "created_at": row["alert_at"],
+                        "why": row["alert_why"],
                         "checks": [dict(c) for c in conn.execute(
                             "SELECT offset_min, price, checked_at FROM price_checks WHERE alert_id=? ORDER BY offset_min",
                             (row["alert_id"],))],

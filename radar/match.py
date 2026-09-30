@@ -5,13 +5,15 @@ Test by hand:  python -m radar.match --paste "Fed cuts rates by 50bp" [--k 20]
 """
 import argparse
 import asyncio
+import json
 import re
 import time
 from datetime import datetime, timezone
 
+import httpx
 from rank_bm25 import BM25Okapi
 
-from radar import alerts, jev
+from radar import alerts, jev, llm
 from radar.config import JEV_CONCURRENCY, PREFILTER_K
 from radar.db import connect, now
 from radar.judge import judge_pair
@@ -58,6 +60,7 @@ def candidates(conn, headline: dict, k: int = PREFILTER_K) -> list[dict]:
     if not idx["bm25"]:
         return []
     q = _tok(headline["title"] + " " + (headline.get("body") or "")[:500])
+    q += _tok(" ".join(headline.get("search_terms") or [])) * 2  # LLM-expanded names weigh double
     scores = idx["bm25"].get_scores(q)
     nowiso = datetime.now(timezone.utc).isoformat()
     ranked = sorted(range(len(scores)), key=lambda i: -scores[i])
@@ -139,13 +142,19 @@ def process_headline(conn, headline_id: int, k: int = PREFILTER_K) -> list[int]:
     h = dict(h)
     conn.execute("UPDATE headlines SET status='processing' WHERE id=?", (headline_id,))
     conn.commit()
-    ids = []
+    ids, new_alerts = [], []
     try:
         if h["source"] != "paste":  # a pasted headline is always judged
             dup = find_duplicate(conn, h)
             if dup:
                 conn.execute("UPDATE headlines SET status='duplicate', dup_of=? WHERE id=?", (dup, headline_id))
                 return []
+        if llm.enabled():
+            async def expand():
+                async with httpx.AsyncClient() as http:
+                    return await llm.search_terms(http, h["title"], h.get("body") or "")
+            h["search_terms"] = asyncio.run(expand())
+            conn.execute("UPDATE headlines SET search_terms=? WHERE id=?", (json.dumps(h["search_terms"]), headline_id))
         markets = candidates(conn, h, k)
         results = asyncio.run(_judge_all(h, markets)) if markets else []
         for rank, (m, j) in enumerate(results):
@@ -161,8 +170,18 @@ def process_headline(conn, headline_id: int, k: int = PREFILTER_K) -> list[int]:
                  j["cost_usd"], j["model"], now()),
             )
             ids.append(cur.lastrowid)
-            alerts.maybe_alert(conn, cur.lastrowid, headline_id, m["id"], j, m["yes_price"], m["question"],
-                               m.get("is_game") or 0, m.get("volume_24h"))
+            aid = alerts.maybe_alert(conn, cur.lastrowid, headline_id, m["id"], j, m["yes_price"], m["question"],
+                                     m.get("is_game") or 0, m.get("volume_24h"))
+            if aid:
+                new_alerts.append((aid, m, j))
+        if new_alerts and llm.enabled():
+            async def explain():
+                async with httpx.AsyncClient() as http:
+                    return await asyncio.gather(*(llm.why(http, h["title"], m["question"], m.get("rules") or "",
+                                                          j["effect"], j["strength"]) for _, m, j in new_alerts))
+            for (aid, _, _), text in zip(new_alerts, asyncio.run(explain())):
+                if text:
+                    conn.execute("UPDATE alerts SET why=? WHERE id=?", (text, aid))
         conn.execute("UPDATE headlines SET status='done' WHERE id=?", (headline_id,))
     except Exception:
         conn.execute("UPDATE headlines SET status='error' WHERE id=?", (headline_id,))

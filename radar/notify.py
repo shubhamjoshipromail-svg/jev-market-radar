@@ -29,7 +29,7 @@ def publish(http: httpx.Client, title: str, message: str, click: str | None = No
 
 def pending(conn):
     rows = conn.execute(
-        "SELECT a.id, a.headline_id, a.kind, a.direction, a.price_at_alert, j.effect, j.strength,"
+        "SELECT a.id, a.headline_id, a.kind, a.why, a.direction, a.price_at_alert, j.effect, j.strength,"
         " h.title, h.source, h.url AS h_url, m.question, m.url AS m_url"
         " FROM alerts a JOIN judgments j ON j.id=a.judgment_id JOIN headlines h ON h.id=a.headline_id"
         " JOIN markets m ON m.id=a.market_id WHERE a.notified=0 ORDER BY a.id").fetchall()
@@ -45,7 +45,7 @@ def render(alerts: list[dict]) -> tuple[str, str, str, int]:
     stale = any(a["kind"] == "stale_price" for a in alerts)
     lines = [f"{ARROW[a['direction']]} {a['question']} — {EFFECT.get(a['effect'], a['effect'])}, "
              f"now {round((a['price_at_alert'] or 0) * 100)}¢{' · STALE' if a['kind'] == 'stale_price' else ''}"
-             for a in alerts[:5]]
+             + (f"\n   {a['why']}" if a.get("why") else "") for a in alerts[:5]]
     if len(alerts) > 5:
         lines.append(f"+{len(alerts) - 5} more on the dashboard")
     lines.append(f"Source: {top['source'].split(':', 1)[-1]}")

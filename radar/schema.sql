@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS headlines (
   fetched_at    TEXT NOT NULL,
   dedupe_key    TEXT UNIQUE,               -- normalized title hash; dupes are skipped
   status        TEXT NOT NULL DEFAULT 'new', -- new | processing | done | error | duplicate | seed
-  dup_of        INTEGER                    -- earlier headline reporting the same event
+  dup_of        INTEGER,                   -- earlier headline reporting the same event
+  search_terms  TEXT                       -- JSON, cheap-LLM expansion used by the prefilter
 );
 
 CREATE TABLE IF NOT EXISTS judgments (
@@ -63,7 +64,8 @@ CREATE TABLE IF NOT EXISTS alerts (
   price_at_alert REAL,
   created_at    TEXT NOT NULL,
   sent_telegram INTEGER NOT NULL DEFAULT 0,
-  notified      INTEGER NOT NULL DEFAULT 0   -- pushed to phone (ntfy)
+  notified      INTEGER NOT NULL DEFAULT 0,  -- pushed to phone (ntfy)
+  why           TEXT                         -- one-line explanation (cheap LLM)
 );
 
 CREATE TABLE IF NOT EXISTS price_checks (
