@@ -1,0 +1,5 @@
+.venv/
+data/
+web_v1/
+__pycache__/
+*.pyc

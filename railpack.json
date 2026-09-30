@@ -1,0 +1,4 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "deploy": { "startCommand": "bash scripts/run_all.sh" }
+}
