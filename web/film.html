@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radar, how it works</title>
+<meta name="description" content="A 68-second explainer: how Radar reads breaking news, checks it against live Polymarket markets with Jev, and keeps a public track record.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* ---------- page chrome (standalone) ---------- */
+  .fp { max-width: 1152px; margin: 0 auto; padding: 28px 16px 64px; }
+  .fp-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; margin-bottom: 20px; }
+  .fp-head h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.015em; }
+  .fp-head h1 span { color: var(--ink-3); font-weight: 400; }
+  .fp-head nav { display: flex; gap: 18px; font-size: 13px; }
+  .fp-head a { color: var(--ink-2); text-decoration: none; }
+  .fp-head a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+
+  .frame { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 8px; }
+  .stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; transform-origin: 0 0; background: var(--surface); }
+  .layer { position: absolute; inset: 0; opacity: 0; }
+  .layer canvas { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; }
+  .layer svg.ov { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: visible; }
+  .a { position: absolute; }
+
+  /* ---------- controls ---------- */
+  .ctl { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; margin-top: 12px; }
+  .ctl button.pp { border: 1px solid var(--line-2); background: var(--raise); border-radius: 6px; width: 36px; height: 32px; cursor: pointer; display: grid; place-items: center; color: var(--ink); }
+  .ctl button.pp:hover { border-color: var(--ink-3); }
+  .ctl .time { font: 12px var(--mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .chap { display: flex; gap: 3px; min-width: 0; }
+  .chap button { all: unset; box-sizing: border-box; cursor: pointer; min-width: 0; padding: 8px 0 0; position: relative; }
+  .chap button::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--mid); border-radius: 2px; }
+  .chap button i { position: absolute; left: 0; top: 0; height: 3px; background: var(--ink); border-radius: 2px; width: 0; }
+  .chap button span { display: block; font: 11px var(--mono); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 4px; }
+  .chap button.on span { color: var(--ink); }
+  .chap button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
+  .now { display: none; margin: 12px 0 0; font-size: 14px; line-height: 1.5; color: var(--ink-2); min-height: 6em; }
+  @media (max-width: 700px) { .now { display: block; } }
+  details.tx { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 14px; font-size: 14px; color: var(--ink-2); }
+  details.tx summary { cursor: pointer; color: var(--ink); font-weight: 500; }
+  details.tx ol { margin: 12px 0 0; padding-left: 22px; display: grid; gap: 6px; max-width: 72ch; }
+
+  /* ---------- storyboard (reduced motion) ---------- */
+  .board { display: none; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 20px; }
+  .board figure { margin: 0; }
+  .board figcaption { margin-top: 8px; font-size: 14px; color: var(--ink-2); }
+  .board figcaption b { font: 500 11px var(--mono); color: var(--ink-3); letter-spacing: .04em; display: block; margin-bottom: 2px; }
+  .rm-note { display: none; font-size: 13px; color: var(--ink-3); margin: 0 0 16px; }
+  .rm-note button { font: inherit; color: var(--ink); background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  html.static .board, html.static .rm-note { display: grid; }
+  html.static .rm-note { display: block; }
+  html.static #player { display: none; }
+  @media (max-width: 700px) {
+    .board { grid-template-columns: 1fr; }
+    .chap button span { visibility: hidden; }
+    .chap button.on span { visibility: visible; overflow: visible; }
+  }
+
+  /* ---------- embed / record: stage only ---------- */
+  html.bare body { background: var(--surface); }
+  html.bare .fp { max-width: none; padding: 0; margin: 0; }
+  html.bare .fp-head, html.bare .ctl, html.bare .now, html.bare details.tx, html.bare .rm-note { display: none; }
+  html.bare .frame { border: 0; border-radius: 0; }
+
+  /* ---------- scene typography (stage units: 1280 x 720) ---------- */
+  .lab { font: 500 14px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+  .cap { font-size: 38px; line-height: 1.15; font-weight: 600; letter-spacing: -0.022em; color: var(--ink); }
+  .k { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .ink2 { color: var(--ink-2); } .ink3 { color: var(--ink-3); }
+  .rule { position: absolute; height: 1px; background: var(--line); }
+  .ell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* S1 */
+  .src { font: 14px/24px var(--mono); color: var(--ink-3); white-space: nowrap; }
+  .src.hot { color: var(--ink); }
+  .row1 { position: absolute; left: 520px; width: 688px; height: 46px; display: grid; grid-template-columns: 150px 1fr; gap: 16px; align-items: center; border-top: 1px solid var(--line); }
+  .row1 .rs1 { font: 13px var(--mono); color: var(--ink-3); }
+  .row1 .rt1 { font-size: 18px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row1.focus { border-top-color: var(--ink); }
+  .row1.focus .rt1 { white-space: normal; line-height: 1.25; font-weight: 500; }
+
+  /* S3 list */
+  .cand { position: absolute; left: 900px; width: 308px; font-size: 15px; line-height: 24px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cand.me { color: var(--ink); font-weight: 500; }
+
+  /* S4 */
+  .qrow .hd { display: flex; align-items: baseline; gap: 12px; }
+  .qrow .n { font: 500 14px var(--mono); color: var(--ink-3); width: 16px; }
+  .qrow .ti { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+  .qrow .ty { margin-left: auto; font: 12px var(--mono); color: var(--ink-3); letter-spacing: .04em; }
+  .qrow .qq { font-size: 15px; color: var(--ink-2); margin: 2px 0 0 28px; }
+  .bar { position: absolute; height: 6px; background: var(--mid); border-radius: 3px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--ink); border-radius: 3px; width: 0; }
+  .val { font: 500 22px var(--mono); font-variant-numeric: tabular-nums; text-align: right; width: 80px; }
+  .col { position: absolute; width: 112px; }
+  .col .v { position: absolute; left: 0; right: 0; top: 0; font: 13px var(--mono); color: var(--ink-2); text-align: center; font-variant-numeric: tabular-nums; }
+  .col .b { position: absolute; left: 36px; width: 40px; bottom: 26px; border-radius: 2px 2px 0 0; }
+  .col .l { position: absolute; left: 0; right: 0; bottom: 0; text-align: center; font-size: 13px; color: var(--ink-3); white-space: nowrap; }
+  .col.pick .l { color: var(--ink); font-weight: 500; }
+  .track { position: absolute; height: 2px; background: var(--line-2); }
+  .tick { position: absolute; width: 1px; height: 10px; background: var(--ink-3); }
+  .tl { position: absolute; font-size: 13px; color: var(--ink-3); transform: translateX(-50%); white-space: nowrap; }
+  .tl.on { color: var(--ink); font-weight: 500; }
+  .mark { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--ink); border: 3px solid var(--surface); box-shadow: 0 0 0 1px var(--ink); }
+
+  /* S5 */
+  .chk { position: absolute; left: 72px; width: 640px; height: 56px; display: grid; grid-template-columns: 210px 110px 1fr 70px; align-items: center; border-top: 1px solid var(--line); }
+  .chk .nm { font-size: 18px; }
+  .chk .vv { font: 500 20px var(--mono); font-variant-numeric: tabular-nums; }
+  .chk .th { font: 15px var(--mono); color: var(--ink-3); }
+  .chk .rs { font: 500 14px var(--mono); text-align: right; letter-spacing: .04em; }
+  .chk.pass .rs { color: var(--ink-2); }
+  .chk.fail .nm, .chk.fail .vv { color: var(--ink-3); }
+  .chk.fail .rs { color: var(--no); }
+
+  /* S6 */
+  .card { position: absolute; left: 72px; top: 184px; width: 540px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--raise); padding: 22px 24px; }
+  .dia { display: inline-block; width: 9px; height: 9px; background: var(--warn); transform: rotate(45deg); margin-right: 10px; }
+  .bdg { font: 500 12px var(--mono); letter-spacing: .06em; padding: 2px 7px; border-radius: 3px; background: var(--warn); color: #1a1400; }
+  .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; margin-top: 18px; }
+  .facts div { font-size: 13px; color: var(--ink-3); }
+  .facts b { display: block; font: 500 17px var(--mono); color: var(--ink); margin-top: 2px; }
+  .chart text { font: 13px var(--mono); fill: var(--ink-3); }
+  .chart .ax { stroke: var(--line-2); }
+  .chart .base { stroke: var(--ink-3); stroke-dasharray: 3 4; }
+  .chart .ln { stroke: var(--yes); stroke-width: 2.5; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .pt { fill: var(--yes); }
+  .chart .pend { fill: var(--surface); stroke: var(--line-2); stroke-width: 1.5; stroke-dasharray: 2 2; }
+
+  /* S7 */
+  .lg { position: absolute; left: 72px; width: 1136px; display: grid; grid-template-columns: 1fr 118px 96px 80px 80px 80px 150px; align-items: center; column-gap: 12px; height: 52px; border-top: 1px solid var(--line); }
+  .lg.lh { border-top: 0; height: 30px; }
+  .lg.lh div { font: 500 12px var(--mono); letter-spacing: .06em; color: var(--ink-3); text-transform: uppercase; }
+  .lg div { font-size: 16px; }
+  .lg .m { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lg .c, .lg .p { font: 16px var(--mono); font-variant-numeric: tabular-nums; }
+  .lg .p { text-align: right; }
+  .lg.lh .p { text-align: right; }
+  .up { color: var(--yes); } .dn { color: var(--no); }
+  .vd { font: 500 14px var(--mono); text-align: right; }
+  .vd.ok { color: var(--ink); } .vd.bad { color: var(--no); } .vd.flat { color: var(--ink-3); }
+
+  /* coda */
+  .ev { position: absolute; display: grid; }
+  .ev b { font: 500 44px var(--mono); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .ev span { font-size: 15px; color: var(--ink-2); }
+</style>
+<script>
+  // mode flags before first paint: ?record / ?embed -> bare stage; reduced motion -> storyboard
+  (function () {
+    var q = new URLSearchParams(location.search), d = document.documentElement;
+    if (q.has("record") || q.has("embed")) d.classList.add("bare");
+    if (q.get("theme")) d.setAttribute("data-theme", q.get("theme"));
+    var rm = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (rm && !q.has("record") && !q.has("t") && !q.has("play")) d.classList.add("static");
+  })();
+</script>
+</head>
+<body>
+<main class="fp">
+  <header class="fp-head">
+    <h1>Radar <span>how it works, in 68 seconds</span></h1>
+    <nav><a href="/">Home</a><a href="/board.html">Live board</a><a href="/scorecard.html">Scorecard</a></nav>
+  </header>
+
+  <p class="rm-note">Your system asks for reduced motion, so the film is shown as still frames. <button type="button" id="playAnyway">Play the animation</button></p>
+  <div class="board" id="board" role="group" aria-label="Storyboard"></div>
+
+  <div id="player">
+    <div class="frame" id="frame" role="img" aria-label="Animated explainer of the Radar pipeline. A transcript follows below."></div>
+    <div class="ctl">
+      <button class="pp" id="pp" type="button" aria-label="Pause"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path id="ppIcon" d="M2 1h3v10H2zM7 1h3v10H7z" fill="currentColor"/></svg></button>
+      <div class="chap" id="chap"></div>
+      <span class="time" id="time">0:00</span>
+    </div>
+    <p class="now" id="now" aria-hidden="true"></p>
+  </div>
+
+  <details class="tx">
+    <summary>Transcript</summary>
+    <ol id="tx"></ol>
+  </details>
+</main>
+
+<script>
+/* Radar explainer. Everything is a pure function of time T, so the film can be scrubbed, shown as stills,
+   or captured frame by frame. Data below is real: pulled from data/radar.db and eval/RESULTS.md on 2026-09-29. */
+const DATA = {
+  markets: 38033,
+  headline: "Leon Edwards withdraws from UFC title fight after suffering serious knee injury",
+  market: "Will Leon Edwards be the UFC Welterweight Champion on December 31, 2026?",
+  rules: "This market will resolve according to the official UFC Welterweight division champion on December 31, 2026 at 12:00 PM ET. Only official UFC division champions will count. Interim champions will not count.",
+  judgment: { relevant: 0.92, same_period: 0.37, effect_conf: 0.93, strength: 2.0, latency_ms: 174,
+    probs: { resolves_yes: 0.00, raises_yes: 0.00, no_effect: 0.04, lowers_yes: 0.95, resolves_no: 0.01 } },
+  leonPrice: 0.0005, leonVolume24h: 0,
+  candidates: [
+    "Will Khamzat Chimaev fight Sean Strickland next?",
+    "Will Dricus Du Plessis fight Nasourdine Imavov next?",
+    "Will Leon Edwards be the UFC Welterweight Champion on December 31, 2026?",
+    "UFC 332: Roberto Soldic vs. Khaos Williams (Welterweight, Main Card)",
+    "Will Ilia Topuria fight Arman Tsarukyan next?",
+    "Will the fight end before Round 3?",
+    "UFC 332: Court McGee vs. Eric Nolan (Welterweight, Early Prelims)",
+    "Will Conor McGregor fight Michael Chandler next?",
+    "Fight to Go the Distance?",
+    "Will Max Holloway fight Justin Gaethje next?",
+    "UFC 332: Jacobe Smith vs. Bruce Whitehead (Welterweight, Early Prelims)",
+  ],
+  ticker: [
+    ["reuters.com", "China's factory activity returns to growth in September amid AI boom"],
+    ["espn", "Mathis Albert (17) becomes youngest goal-scorer in U.S. men's history"],
+    ["guardian world", "David Shoebridge elected new Greens leader after pledging to ‘replace’ Labor"],
+    ["cnbc", "30-year Treasury bond yield scales to highest level since 2002"],
+    ["wsj.com", "The Gap Between the Rich and the Very, Very Rich Is Getting Wider"],
+    ["espn", "White Sox top Astros in Game 1; first playoff win in 5 years"],
+    ["google news", "South Korea says North Korean mines behind DMZ blast violated armistice - Reuters"],
+    ["pasted", "Leon Edwards withdraws from UFC title fight after suffering serious knee injury"],
+  ],
+  // alert #31 in the live log. checks = YES price at +1, +5, +10, +60 min (null = not yet checked)
+  alert: { kind: "MOVER", source: "google news · Battery Power", dir: -1, effect: "YES less likely", strength: "settled fact",
+    headline: "Braves initiate exorcism with Austin Riley’s huge homer, 5-3 win over Phillies in NLWC Game 1",
+    market: "Will Philadelphia Phillies advance to the NLDS in the 2026 MLB Playoffs?", relevant: 0.92,
+    at: 0.285, checks: [0.285, 0.265, 0.27, null] },
+  // a slice of the live alert log: [market, direction, at alert, +1, +5, +10]
+  ledger: [
+    ["Will Philadelphia Phillies advance to the NLDS in the 2026 MLB Playoffs?", -1, 0.285, 0.285, 0.265, 0.27],
+    ["US-Canada diplomatic agreement to lower tariffs by December 31?", -1, 0.555, 0.55, 0.61, 0.555],
+    ["Will Trump issue an AI Safety Executive Order by October 31?", -1, 0.0525, 0.054, 0.054, 0.053],
+    ["Will the 30-year Treasury yield hit 5.70% before 2027?", 1, 0.785, 0.785, 0.785, 0.785],
+    ["Will Chicago White Sox advance to the ALDS in the 2026 MLB Playoffs?", 1, 0.685, 0.695, 0.695, 0.685],
+  ],
+  eval: { precision: "1.00", recall: "0.93", direction: "39/40", pairs: 100 },
+};
+
+const RSS = ["bbc world", "bbc business", "guardian world", "al jazeera", "cnbc", "npr", "google news", "politico",
+  "espn", "coindesk", "fox news", "nyt", "wsj world"];
+const BSKY = ["apnews.com", "reuters.com", "nytimes.com", "bbcnews", "washingtonpost.com", "cnn.com", "politico.com",
+  "axios.com", "bloomberg.com", "theguardian.com", "npr.org", "wsj.com", "nbcnews.com", "aljazeera.com", "espn.com", "coindesk.com"];
+
+/* ---------- helpers ---------- */
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const E = { out: (t) => 1 - Math.pow(1 - t, 3), inOut: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2), lin: (t) => t };
+const P = (t, a, b, e = E.inOut) => e(clamp((t - a) / (b - a)));
+const lerp = (a, b, k) => a + (b - a) * k;
+const fmt = (n) => Math.round(n).toLocaleString("en-US");
+const cents = (p) => (p * 100 < 10 ? (p * 100).toFixed(2) : (p * 100).toFixed(1)) + "¢";
+function h(tag, cls, parent, html, style) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html != null) e.innerHTML = html;
+  if (style) Object.assign(e.style, style);
+  parent && parent.appendChild(e);
+  return e;
+}
+const at = (el, x, y, w) => { el.style.left = x + "px"; el.style.top = y + "px"; if (w) el.style.width = w + "px"; return el; };
+const show = (el, k, dy = 0) => { el.style.opacity = k; el.style.transform = dy ? `translateY(${(1 - k) * dy}px)` : ""; };
+const SVGNS = "http://www.w3.org/2000/svg";
+function sv(tag, attrs, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; }
+function hash(i) { let x = Math.imul(i ^ 0x9e3779b9, 0x85ebca6b); x ^= x >>> 13; x = Math.imul(x, 0xc2b2ae35); x ^= x >>> 16; return (x >>> 0) / 4294967296; }
+function colors() {
+  const cs = getComputedStyle(document.documentElement), g = (v) => cs.getPropertyValue(v).trim();
+  return { ink: g("--ink"), ink2: g("--ink-2"), ink3: g("--ink-3"), line: g("--line"), line2: g("--line-2"), mid: g("--mid"), yes: g("--yes"), no: g("--no"), surface: g("--surface") };
+}
+function header(L, n, label, caption) {
+  at(h("div", "a lab", L, `${String(n).padStart(2, "0")} &nbsp;${label}`), 72, 52);
+  at(h("div", "a cap", L, caption), 72, 80, 1136);
+}
+
+/* ---------- the dot field shared by scenes 2 and 3 ---------- */
+const F = { x: 72, y: 196, w: 760, h: 440, cols: 260 };
+F.rows = Math.ceil(DATA.markets / F.cols); F.sx = F.w / F.cols; F.sy = F.h / F.rows;
+const DX = new Float32Array(DATA.markets), DY = new Float32Array(DATA.markets), KEY = new Float32Array(DATA.markets);
+for (let i = 0; i < DATA.markets; i++) {
+  const c = i % F.cols, r = Math.floor(i / F.cols);
+  DX[i] = F.x + c * F.sx; DY[i] = F.y + r * F.sy;
+  KEY[i] = 0.72 * (c / F.cols) + 0.28 * hash(i);
+}
+const CAND = [];
+for (let j = 0; CAND.length < 40; j++) { const i = Math.floor(hash(j + 7777) * DATA.markets); if (!CAND.includes(i)) CAND.push(i); }
+const LEON_SLOT = 2, LEON = CAND[LEON_SLOT];
+const candTarget = (c) => (c < 11 ? [884, 300 + c * 24 + 10] : [884 + (c - 11) * 11, 588]);
+
+/* ---------- scenes: build(layer, stage) returns update(t) ---------- */
+const SCENES = [
+  { key: "news", label: "News", dur: 8, still: 6.6,
+    text: "Radar reads breaking news the moment it lands: 13 RSS feeds and 16 Bluesky news accounts, or a headline you paste in.",
+    build(L) {
+      header(L, 1, "News", "Radar reads breaking news the moment it lands.");
+      at(h("div", "a k", L, "RSS feeds · 13"), 72, 184);
+      at(h("div", "a k", L, "Bluesky accounts · 16"), 262, 184);
+      const srcEls = {};
+      RSS.forEach((s, i) => { srcEls["r:" + s] = at(h("div", "a src", L, s), 72, 212 + i * 24); });
+      BSKY.forEach((s, i) => { srcEls["b:" + s] = at(h("div", "a src", L, s), 262, 212 + i * 24); });
+      const srcKey = (s) => (srcEls["b:" + s] ? "b:" + s : srcEls["r:" + s] ? "r:" + s : null);
+      at(h("div", "a k", L, "Incoming headlines"), 520, 184);
+      const arrive = [0.5, 1.15, 1.8, 2.45, 3.05, 3.65, 4.25, 5.1];
+      const rows = DATA.ticker.map(([s, t], j) => {
+        const r = h("div", "row1" + (j === 7 ? " focus" : ""), L, `<span class="rs1">${s}</span><span class="rt1">${t}</span>`);
+        return r;
+      });
+      return (t) => {
+        rows.forEach((r, j) => {
+          const k = P(t, arrive[j], arrive[j] + 0.5, E.out);
+          let slot = 0; for (let m = j + 1; m < rows.length; m++) slot += P(t, arrive[m], arrive[m] + 0.5, E.inOut) * (m === 7 ? 1.6 : 1);
+          r.style.top = 212 + slot * 46 - (1 - k) * 18 + "px";
+          const dim = j === 7 ? 1 : 1 - 0.6 * P(t, 5.7, 6.4);
+          r.style.opacity = k * dim * (slot > 8.6 ? 0 : 1);
+          if (j === 7) r.style.height = 74 + "px";
+        });
+        for (const k in srcEls) srcEls[k].classList.remove("hot");
+        DATA.ticker.forEach(([s], j) => { const key = srcKey(s); if (key && t >= arrive[j] && t < arrive[j] + 0.9) srcEls[key].classList.add("hot"); });
+      };
+    } },
+
+  { key: "markets", label: "Markets", dur: 7, still: 5.8,
+    text: "Each headline is checked against about 38,000 live Polymarket markets (liquidity at least $1k, not yet ended), each with written resolution rules.",
+    build(L, S) {
+      header(L, 2, "Markets", "Every headline is checked against 38,000 live markets.");
+      const cv = S.canvas(L);
+      const n = at(h("div", "a mono", L, "0", { fontSize: "64px", fontWeight: 500, letterSpacing: "-0.03em", lineHeight: "1" }), 880, 196);
+      at(h("div", "a", L, "live Polymarket markets", { fontSize: "18px", color: "var(--ink-2)" }), 880, 270);
+      at(h("div", "a mono ink3", L, "liquidity ≥ $1k · not yet ended<br>re-synced every 3 minutes", { fontSize: "13px", lineHeight: "20px" }), 880, 302);
+      const card = at(h("div", "a", L, `<div class="k">One of them</div>
+        <div style="font-size:18px;font-weight:500;line-height:1.3;margin:6px 0 14px">${DATA.market}</div>
+        <div class="k">Resolution rules</div>
+        <div style="font-size:14px;line-height:1.45;color:var(--ink-2);margin-top:6px;border-left:2px solid var(--line-2);padding-left:12px">${DATA.rules}</div>`), 880, 372, 328);
+      const ov = sv("svg", { class: "ov", viewBox: "0 0 1280 720" }, L);
+      const ring = sv("circle", { r: 7, fill: "none", "stroke-width": 1.5, style: "stroke:var(--ink)" }, ov);
+      const ln = sv("path", { fill: "none", "stroke-width": 1, style: "stroke:var(--ink-3)" }, ov);
+      const lx = DX[LEON] + 1, ly = DY[LEON] + 1;
+      ring.setAttribute("cx", lx); ring.setAttribute("cy", ly);
+      return (t, C) => {
+        const p = P(t, 0.15, 3.3, E.inOut);
+        const g = cv.ctx; g.clearRect(0, 0, 1280, 720); g.fillStyle = C.ink3;
+        const lim = p * 1.001;
+        for (let i = 0; i < DATA.markets; i++) if (KEY[i] < lim) g.fillRect(DX[i], DY[i], 1.9, 1.9);
+        n.textContent = fmt(DATA.markets * p);
+        const q = P(t, 3.6, 4.4, E.out);
+        ring.style.opacity = q; ring.setAttribute("r", lerp(18, 7, q));
+        const lp = P(t, 4.0, 4.8);
+        const ex = lerp(lx + 7, 872, lp);
+        ln.setAttribute("d", `M${lx + 7} ${ly} H${ex}`); ln.style.opacity = lp > 0 ? 1 : 0;
+        show(card, P(t, 4.5, 5.3, E.out), 10);
+        g.fillStyle = C.ink; if (q > 0) g.fillRect(lx - 1.5, ly - 1.5, 3.5, 3.5);
+      };
+    } },
+
+  { key: "prefilter", label: "Prefilter", dur: 8, still: 6.9,
+    text: "A keyword prefilter (BM25 over each market's question and rules) keeps about 40 candidates. No model has been called yet.",
+    build(L, S) {
+      header(L, 3, "Prefilter", "A keyword prefilter keeps the 40 closest. No model yet.");
+      const cv = S.canvas(L);
+      at(h("div", "a k", L, "Headline"), 880, 184);
+      at(h("div", "a", L, DATA.headline, { fontSize: "16px", lineHeight: "1.35", fontWeight: 500 }), 880, 204, 328);
+      const cnt = at(h("div", "a mono ink2", L, "", { fontSize: "13px" }), 880, 270);
+      const labels = DATA.candidates.map((q, c) => at(h("div", "cand" + (c === LEON_SLOT ? " me" : ""), L, q), 900, 300 + c * 24));
+      const more = at(h("div", "a mono ink3", L, "+ 29 more candidates", { fontSize: "13px" }), 880, 602);
+      return (t, C) => {
+        const g = cv.ctx; g.clearRect(0, 0, 1280, 720);
+        const dim = P(t, 0.3, 1.6);
+        g.globalAlpha = lerp(1, 0.28, dim); g.fillStyle = C.ink3;
+        for (let i = 0; i < DATA.markets; i++) g.fillRect(DX[i], DY[i], 1.9, 1.9);
+        g.globalAlpha = 1; g.fillStyle = C.ink;
+        CAND.forEach((i, c) => {
+          const sz = lerp(1.9, 4.5, P(t, 0.5, 1.4));
+          const f = P(t, 2.0 + c * 0.035, 3.6 + c * 0.035, E.inOut);
+          const [tx, ty] = candTarget(c);
+          const x = lerp(DX[i], tx - 2, f), y = lerp(DY[i], ty - 2, f);
+          g.fillStyle = c === LEON_SLOT || t < 6.2 ? C.ink : C.ink3;
+          g.fillRect(x - (sz - 1.9) / 2, y - (sz - 1.9) / 2, sz, sz);
+        });
+        const kk = P(t, 2.0, 4.6);
+        cnt.textContent = `${fmt(lerp(DATA.markets, 40, kk))} candidates`;
+        labels.forEach((el, c) => { el.style.opacity = P(t, 3.4 + c * 0.05, 4.2 + c * 0.05) * (c === LEON_SLOT ? 1 : lerp(1, 0.45, P(t, 6.0, 6.8))); });
+        more.style.opacity = P(t, 4.2, 4.9);
+      };
+    } },
+
+  { key: "jev", label: "Jev", dur: 14, still: 12.5,
+    text: "For each headline and market pair, Jev (TypeSafe AI's System One model) answers four typed questions with calibrated probabilities: relevant? same time period? effect on YES? how settled? About 150 ms and $0.00004 per judgment; it never generates text. All 40 pairs run in parallel.",
+    build(L) {
+      header(L, 4, "Jev", "Jev answers four typed questions, with probabilities.");
+      at(h("div", "a k", L, "Headline"), 72, 176);
+      at(h("div", "a", L, DATA.headline, { fontSize: "20px", lineHeight: "1.3", fontWeight: 500 }), 72, 196, 400);
+      at(h("div", "a", L, `<div class="k">Market</div><div style="font-size:20px;line-height:1.3;margin:4px 0 12px">${DATA.market}</div>
+        <div style="font-size:13px;line-height:1.45;color:var(--ink-2);border-left:2px solid var(--line-2);padding-left:12px">${DATA.rules}</div>`), 72, 280, 400);
+      at(h("div", "a mono ink3", L,
+        `Jev · TypeSafe AI “System One” model<br>typed answers, never generated text<br>this pair: ${DATA.judgment.latency_ms} ms · ≈ $0.00004<br>1 of 40 pairs, judged in parallel`,
+        { fontSize: "13px", lineHeight: "21px" }), 72, 548, 420);
+      h("div", "rule", L, null, { left: "506px", top: "176px", width: "1px", height: "470px" });
+
+      const X = 548, W = 540;
+      const row = (y, n, ti, ty, qq) => at(h("div", "a qrow", L, `<div class="hd"><span class="n">${n}</span><span class="ti">${ti}</span><span class="ty">${ty}</span></div><div class="qq">${qq}</div>`), X, y, 660);
+      const R = [
+        row(172, 1, "Relevant", "yes / no · probability", "Would a trader holding this market want to know?"),
+        row(270, 2, "Same time period", "yes / no · probability", "Does the news fall in the window the rules name?"),
+        row(368, 3, "Effect on YES", "choice of 5 · probabilities", "What does this news do to the chance of YES?"),
+        row(540, 4, "Strength", "score 0 – 2", "How settled is what the headline reports?"),
+      ];
+      const mkBar = (y) => { const b = at(h("div", "bar", L, "<i></i>"), X + 28, y, W); const v = at(h("div", "a val", L, "0.00"), X + 28 + W + 12, y - 13); return [b, b.firstChild, v]; };
+      const B1 = mkBar(236), B2 = mkBar(334);
+      const ORDER = [["resolves_yes", "Resolves YES", "--yes"], ["raises_yes", "YES more likely", "--yes"], ["no_effect", "No effect", "--mid"], ["lowers_yes", "YES less likely", "--no"], ["resolves_no", "Resolves NO", "--no"]];
+      const cols = ORDER.map(([k, lab, c], i) => {
+        const col = at(h("div", "col" + (k === "lowers_yes" ? " pick" : ""), L, `<div class="v">0.20</div><div class="b" style="background:var(${c})"></div><div class="l">${lab}</div>`), X + 28 + i * 112, 420);
+        col.style.height = "112px"; return col;
+      });
+      const TY = 612, TX = X + 28;
+      at(h("div", "track", L), TX, TY, W);
+      const tl = [["Speculation", 0], ["Developing", 0.5], ["Settled fact", 1]].map(([s, f]) => {
+        at(h("div", "tick", L), TX + f * W, TY - 4);
+        return at(h("div", "tl", L, s), TX + f * W, TY + 12);
+      });
+      tl[0].style.transform = "none"; tl[2].style.transform = "translateX(-100%)";
+      const mk = h("div", "mark", L);
+      const sv4 = at(h("div", "a val", L, "0.0"), TX + W + 12, TY - 14);
+      const J = DATA.judgment, S0 = [0.8, 3.0, 5.2, 8.6];
+      return (t) => {
+        R.forEach((r, i) => show(r, P(t, S0[i], S0[i] + 0.6, E.out), 8));
+        [[B1, J.relevant, S0[0]], [B2, J.same_period, S0[1]]].forEach(([[b, fill, v], val, s]) => {
+          const k = P(t, s + 0.5, s + 2.1, E.inOut); b.style.opacity = v.style.opacity = P(t, s, s + 0.5);
+          fill.style.width = val * k * 100 + "%"; v.textContent = (val * k).toFixed(2);
+        });
+        const k3 = P(t, S0[2] + 0.6, S0[2] + 2.8, E.inOut);
+        cols.forEach((col, i) => {
+          const val = lerp(0.2, J.probs[ORDER[i][0]], k3);
+          col.style.opacity = P(t, S0[2] + 0.2, S0[2] + 0.7);
+          col.querySelector(".b").style.height = Math.max(1.5, val * 64) + "px";
+          const v = col.querySelector(".v"); v.textContent = val.toFixed(2);
+          v.style.transform = `translateY(${64 - val * 64 - 4}px)`;
+          col.classList.toggle("pick", ORDER[i][0] === "lowers_yes" && k3 > 0.98);
+        });
+        const k4 = P(t, S0[3] + 0.6, S0[3] + 2.4, E.inOut), s4 = J.strength * k4;
+        mk.style.left = TX + (s4 / 2) * W - 7 + "px"; mk.style.top = TY - 6 + "px";
+        mk.style.opacity = sv4.style.opacity = P(t, S0[3], S0[3] + 0.5);
+        tl.forEach((e, i) => { e.style.opacity = P(t, S0[3], S0[3] + 0.5); e.classList.toggle("on", i === 2 && k4 > 0.98); });
+        sv4.textContent = s4.toFixed(1);
+      };
+    } },
+
+  { key: "code", label: "Code", dur: 8, still: 7.4,
+    text: "Plain code, not the model, decides. For this pair relevance, confidence and strength pass, but the market already sits at 0.05¢ with no trading in 24 hours, so there is nothing to flag: no alert.",
+    build(L) {
+      header(L, 5, "Code", "Jev judges. Plain code decides.");
+      const J = DATA.judgment;
+      const checks = [
+        ["Relevant", J.relevant.toFixed(2), "≥ 0.70", 1],
+        ["Effect confidence", J.effect_conf.toFixed(2), "≥ 0.60", 1],
+        ["Strength", J.strength.toFixed(1), "≥ 1.0", 1],
+        ["Same time period", J.same_period.toFixed(2), "≥ 0.50", 0],
+        ["24h volume", "$" + DATA.leonVolume24h, "≥ $1,000", 0],
+        ["YES price", cents(DATA.leonPrice), "> 5¢ to move lower", 0],
+      ];
+      const rows = checks.map(([nm, v, th, ok], i) =>
+        at(h("div", "chk " + (ok ? "pass" : "fail"), L, `<span class="nm">${nm}</span><span class="vv">${v}</span><span class="th">${th}</span><span class="rs">${ok ? "PASS" : "FAIL"}</span>`), 72, 186 + i * 56));
+      const foot = at(h("div", "a mono ink3", L, "radar/alerts.py · thresholds live in code and can be tuned<br>without asking Jev again", { fontSize: "13px", lineHeight: "20px" }), 72, 540, 640);
+      const v = at(h("div", "a", L, `<div style="font-size:48px;font-weight:600;letter-spacing:-0.025em;line-height:1">No alert.</div>
+        <p style="font-size:18px;line-height:1.5;color:var(--ink-2);margin:18px 0 0">The news is real, and Jev read it as <span style="color:var(--ink)">YES less likely, settled fact</span>. But the market already prices Edwards at ${cents(DATA.leonPrice)} and nobody traded it in the last 24 hours. There is nothing to flag, so Radar stays quiet.</p>`), 800, 190, 408);
+      return (t) => {
+        rows.forEach((r, i) => show(r, P(t, 0.4 + i * 0.5, 0.9 + i * 0.5, E.out), 6));
+        show(foot, P(t, 3.6, 4.2));
+        show(v, P(t, 4.2, 5.0, E.out), 10);
+      };
+    } },
+
+  { key: "alert", label: "Alert", dur: 10, still: 9.2,
+    text: "When every check passes, Radar alerts. A mover means the news shifts the odds; a stale price means the news settles a market whose price hasn't caught up. Then it starts watching the price.",
+    build(L) {
+      header(L, 6, "Alert", "When every check passes, Radar alerts.");
+      const A = DATA.alert;
+      const card = h("div", "card", L, `<div style="display:flex;align-items:center;gap:10px"><span class="dia"></span><span class="bdg">${A.kind}</span><span class="mono ink3" style="font-size:13px;margin-left:4px">${A.source}</span></div>
+        <div style="font-size:23px;line-height:1.3;font-weight:600;letter-spacing:-0.012em;margin:14px 0 16px">${A.headline}</div>
+        <div style="border-top:1px solid var(--line);padding-top:14px"><div class="k">Market</div><div style="font-size:17px;line-height:1.35;margin-top:4px">${A.market}</div></div>
+        <div class="facts"><div>Effect<b class="${A.dir > 0 ? "up" : "dn"}">${A.effect}</b></div><div>Strength<b>${A.strength}</b></div><div>Relevant<b>${A.relevant.toFixed(2)}</b></div><div>Price at alert<b>${cents(A.at)}</b></div></div>`);
+      const kinds = at(h("div", "a", L, `<p style="margin:0 0 6px;font-size:15px;color:var(--ink-2)"><b style="color:var(--ink);font-weight:500">Mover</b> — the news shifts the odds.</p>
+        <p style="margin:0;font-size:15px;color:var(--ink-2)"><b style="color:var(--ink);font-weight:500">Stale price</b> — the news settles the market, the price hasn't caught up.</p>`), 72, 590, 560);
+      const ov = sv("svg", { class: "ov chart", viewBox: "0 0 1280 720" }, L);
+      const X0 = 720, X1 = 1180, Y0 = 250, Y1 = 520;
+      sv("text", { x: X0 - 40, y: 204 }, ov).textContent = "YES PRICE SINCE ALERT";
+      const pts = [A.at, ...A.checks], known = pts.map((v, i) => [i, v]).filter(([, v]) => v != null);
+      const vals = known.map(([, v]) => v * 100), lo = Math.floor(Math.min(...vals) - 1.5), hi = Math.ceil(Math.max(...vals) + 1.5);
+      const xs = (i) => X0 + (i / 4) * (X1 - X0), ys = (c) => Y1 - ((c - lo) / (hi - lo)) * (Y1 - Y0);
+      for (let c = lo; c <= hi; c += Math.max(1, Math.round((hi - lo) / 4))) {
+        sv("line", { class: "ax", x1: X0, x2: X1, y1: ys(c), y2: ys(c), style: "stroke:var(--line)" }, ov);
+        const tx = sv("text", { x: X0 - 12, y: ys(c) + 4, "text-anchor": "end" }, ov); tx.textContent = c + "¢";
+      }
+      ["alert", "+1m", "+5m", "+10m", "+60m"].forEach((s, i) => { const tx = sv("text", { x: xs(i), y: Y1 + 26, "text-anchor": "middle" }, ov); tx.textContent = s; });
+      sv("line", { class: "base", x1: X0, x2: X1, y1: ys(A.at * 100), y2: ys(A.at * 100) }, ov);
+      const tone = A.dir > 0 ? "var(--yes)" : "var(--no)";
+      const line = sv("polyline", { class: "ln", style: `stroke:${tone}` }, ov);
+      const dots = pts.map((v, i) => v == null
+        ? sv("circle", { class: "pend", cx: xs(i), cy: ys(A.at * 100), r: 5 }, ov)
+        : sv("circle", { class: "pt", cx: xs(i), cy: ys(v * 100), r: 4.5, style: `fill:${tone}` }, ov));
+      const pend = sv("text", { x: xs(4), y: ys(A.at * 100) - 16, "text-anchor": "middle" }, ov); pend.textContent = "pending";
+      const last = known[known.length - 1], d = (last[1] - A.at) * 100, offs = ["", "+1m", "+5m", "+10m", "+60m"];
+      const dl = sv("text", { x: xs(last[0]), y: ys(last[1] * 100) - 16, "text-anchor": "middle", style: "fill:var(--ink);font-weight:500" }, ov);
+      dl.textContent = Math.abs(d) < 1e-9 ? `flat at ${offs[last[0]]}` : `${d > 0 ? "+" : "−"}${Math.abs(d).toFixed(1)}¢ at ${offs[last[0]]}, ${Math.sign(d) === A.dir ? "as called" : "against the call"}`;
+      const firstPending = pts.findIndex((v) => v == null);
+      if (firstPending > 0) pend.setAttribute("x", (xs(firstPending) + xs(4)) / 2);
+      if (firstPending > 0 && firstPending < 4) pend.textContent = "checks pending";
+      return (t) => {
+        show(card, P(t, 0.3, 1.1, E.out), 12);
+        show(kinds, P(t, 7.2, 7.9));
+        const chartIn = P(t, 1.8, 2.4); ov.style.opacity = chartIn;
+        const g = P(t, 2.6, 6.2, E.inOut) * (known.length - 1);
+        const seg = [];
+        for (let k = 0; k < known.length; k++) {
+          const [i, v] = known[k];
+          if (k <= g) seg.push([xs(i), ys(v * 100)]);
+          else { const [pi, pv] = known[k - 1], f = g - (k - 1); if (f > 0) seg.push([lerp(xs(pi), xs(i), f), lerp(ys(pv * 100), ys(v * 100), f)]); break; }
+        }
+        line.setAttribute("points", seg.map((p) => p.join(",")).join(" "));
+        dots.forEach((c, i) => { const k = known.findIndex(([j]) => j === i); c.style.opacity = k < 0 ? P(t, 6.2, 6.8) : k <= g + 0.01 ? 1 : 0; });
+        pend.style.opacity = P(t, 6.2, 6.8);
+        dl.style.opacity = P(t, 6.0, 6.8);
+      };
+    } },
+
+  { key: "record", label: "Track record", dur: 8, still: 7.4,
+    text: "Every alert's price is re-checked at +1, +5, +10 and +60 minutes and published on the scorecard, misses included.",
+    build(L) {
+      header(L, 7, "Track record", "Then it keeps score, misses included.");
+      at(h("div", "lg lh", L, `<div>Market</div><div>Call</div><div class="p">At alert</div><div class="p">+1m</div><div class="p">+5m</div><div class="p">+10m</div><div class="p">At +10m</div>`), 72, 176);
+      const rows = DATA.ledger.map(([m, dir, a, c1, c5, c10], i) => {
+        const r = at(h("div", "lg", L), 72, 206 + i * 52);
+        const cell = (v) => `<div class="p">${v == null ? '<span class="ink3">…</span>' : cents(v)}</div>`;
+        const last = c10 ?? c5, mv = last - a;
+        const vd = Math.abs(mv) < 1e-9 ? ["flat", "flat"] : Math.sign(mv) === dir ? ["ok", "moved as called"] : ["bad", "moved against"];
+        const pending = c10 == null;
+        r.innerHTML = `<div class="m">${m}</div><div class="c ${dir > 0 ? "up" : "dn"}">${dir > 0 ? "↑ toward YES" : "↓ toward NO"}</div>
+          <div class="p">${cents(a)}</div>${cell(c1)}${cell(c5)}${cell(c10)}<div class="vd ${pending ? "flat" : vd[0]}">${pending ? "checking" : vd[1]}</div>`;
+        return r;
+      });
+      const note = at(h("div", "a mono ink3", L, "A slice of the live alert log, 29 Sep 2026. A flat price counts as no reaction, not a hit.<br>The full record, by alert type, market category and news source, is on the scorecard.", { fontSize: "13px", lineHeight: "21px" }), 72, 506, 1000);
+      return (t) => {
+        rows.forEach((r, i) => {
+          show(r, P(t, 0.4 + i * 0.35, 0.9 + i * 0.35, E.out), 6);
+          [...r.children].forEach((c, j) => { if (j >= 3) c.style.opacity = P(t, 1.6 + i * 0.35 + (j - 3) * 0.45, 2.0 + i * 0.35 + (j - 3) * 0.45); });
+        });
+        show(note, P(t, 5.0, 5.7));
+      };
+    } },
+
+  { key: "end", label: "Radar", dur: 5, still: 4.2,
+    text: "In an offline eval on 100 labelled pairs: precision 1.00, recall 0.93, direction right on 39 of 40. Radar is an information tool, not trading advice.",
+    build(L) {
+      const a = at(h("div", "a", L, `<div style="font-size:84px;font-weight:600;letter-spacing:-0.04em;line-height:1">Radar</div>
+        <div style="font-size:24px;line-height:1.35;color:var(--ink-2);margin-top:18px;max-width:900px">Breaking news, read against the rules of every live Polymarket market.</div>`), 72, 150, 1100);
+      const e = DATA.eval;
+      const ev = [[e.precision, "precision"], [e.recall, "recall"], [e.direction, "direction right"]].map(([b, s], i) =>
+        at(h("div", "ev", L, `<b>${b}</b><span>${s}</span>`), 72 + i * 220, 424));
+      const lbl = at(h("div", "a mono ink3", L, `Offline eval · ${e.pairs} labelled pairs · 29 Sep 2026`, { fontSize: "13px" }), 72, 388);
+      const r = at(h("div", "rule", L), 72, 372, 1136);
+      const fine = at(h("div", "a ink3", L, "An information tool, not trading advice.", { fontSize: "15px" }), 72, 628);
+      return (t) => {
+        show(a, P(t, 0.2, 1.0, E.out), 10);
+        r.style.opacity = P(t, 0.9, 1.4); lbl.style.opacity = P(t, 1.0, 1.5);
+        ev.forEach((x, i) => show(x, P(t, 1.2 + i * 0.25, 1.8 + i * 0.25, E.out), 6));
+        fine.style.opacity = P(t, 2.2, 2.8);
+      };
+    } },
+];
+
+let acc = 0; SCENES.forEach((s) => { s.t0 = acc; acc += s.dur; });
+const TOTAL = acc, FADE = 0.45;
+
+/* ---------- stage ---------- */
+function makeStage(host, only) {
+  const root = h("div", "stage", host), canvases = [];
+  const S = { canvas(L) { const c = h("canvas", "", L); const o = { el: c, ctx: c.getContext("2d") }; canvases.push(o); return o; } };
+  const layers = SCENES.map((sc, i) => { if (only != null && only !== i) return null; const L = h("div", "layer", root); return { L, sc, up: sc.build(L, S) }; });
+  let k = 1, lastT = 0;
+  const api = {
+    root,
+    fit() {
+      const w = host.clientWidth; if (!w) return;
+      k = w / 1280; root.style.transform = `scale(${k})`;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2), q = k * dpr;
+      canvases.forEach((c) => { c.el.width = Math.round(1280 * q); c.el.height = Math.round(720 * q); c.ctx.setTransform(q, 0, 0, q, 0, 0); });
+      api.render(lastT);
+    },
+    render(T) {
+      lastT = T; const C = colors();
+      layers.forEach((ly, i) => {
+        if (!ly) return;
+        const s = ly.sc, t = T - s.t0;
+        let o;
+        if (only != null) o = 1;
+        else {
+          const fin = i === 0 ? 1 : clamp((t + FADE) / FADE), fout = i === SCENES.length - 1 ? 1 : clamp((s.dur - t) / FADE);
+          o = Math.min(fin, fout); if (t < -FADE || t > s.dur) o = 0;
+        }
+        ly.L.style.opacity = o; ly.L.style.visibility = o > 0 ? "visible" : "hidden";
+        if (o > 0) ly.up(clamp(t, 0, s.dur), C);
+      });
+    },
+  };
+  new ResizeObserver(() => api.fit()).observe(host);
+  return api;
+}
+
+/* ---------- player ---------- */
+const q = new URLSearchParams(location.search), docEl = document.documentElement;
+const frame = document.getElementById("frame");
+if (docEl.classList.contains("bare")) { frame.style.aspectRatio = "auto"; frame.style.height = "100vh"; }
+const stage = makeStage(frame);
+let T = 0, playing = !q.has("t") && !q.has("record"), lastNow = null;
+const loop = q.has("embed") || q.has("loop");
+
+const chap = document.getElementById("chap"), timeEl = document.getElementById("time"), nowEl = document.getElementById("now");
+const chapBtns = SCENES.map((s, i) => {
+  const b = h("button", "", chap, `<i></i><span>${s.key === "end" ? "" : String(i + 1).padStart(2, "0") + " "}${s.label}</span>`);
+  b.type = "button"; b.style.flex = s.dur; b.setAttribute("aria-label", `Jump to ${s.label}`);
+  b.onclick = () => { T = s.t0 + 0.01; if (!playing) setPlaying(true); draw(); };
+  return b;
+});
+document.getElementById("tx").innerHTML = SCENES.map((s) => `<li>${s.text}</li>`).join("");
+const mm = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+function draw() {
+  stage.render(T);
+  chapBtns.forEach((b, i) => { const s = SCENES[i], f = clamp((T - s.t0) / s.dur); b.firstChild.style.width = f * 100 + "%"; b.classList.toggle("on", T >= s.t0 && T < s.t0 + s.dur); });
+  timeEl.textContent = `${mm(T)} / ${mm(TOTAL)}`;
+  const cur = SCENES.find((s) => T >= s.t0 && T < s.t0 + s.dur) || SCENES[SCENES.length - 1];
+  if (nowEl.dataset.k !== cur.key) { nowEl.dataset.k = cur.key; nowEl.textContent = cur.text; }
+}
+function setPlaying(v) {
+  playing = v; lastNow = null;
+  document.getElementById("ppIcon").setAttribute("d", v ? "M2 1h3v10H2zM7 1h3v10H7z" : "M2 1l9 5-9 5z");
+  document.getElementById("pp").setAttribute("aria-label", v ? "Pause" : "Play");
+  if (v) requestAnimationFrame(tick);
+}
+function tick(now) {
+  if (!playing) return;
+  if (lastNow != null) T += (now - lastNow) / 1000;
+  lastNow = now;
+  if (T >= TOTAL) { if (loop) T = 0; else { T = TOTAL - 0.001; draw(); setPlaying(false); return; } }
+  draw(); requestAnimationFrame(tick);
+}
+document.getElementById("pp").onclick = () => { if (!playing && T >= TOTAL - 0.01) T = 0; setPlaying(!playing); draw(); };
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest && e.target.closest("button,summary,a") && e.key === " ") return;
+  if (e.key === " ") { e.preventDefault(); document.getElementById("pp").click(); }
+  if (e.key === "ArrowRight") { T = Math.min(TOTAL - 0.01, T + 5); draw(); }
+  if (e.key === "ArrowLeft") { T = Math.max(0, T - 5); draw(); }
+});
+
+/* capture hooks: ?t=12.5 freezes a frame; window.film.render(T) for frame-by-frame recording */
+window.film = { duration: TOTAL, render: (t) => { T = t; draw(); }, scenes: SCENES.map((s) => ({ key: s.key, t0: s.t0, dur: s.dur, still: s.t0 + s.still })) };
+if (q.has("t")) T = parseFloat(q.get("t")) || 0;
+
+/* ---------- storyboard for reduced motion ---------- */
+function buildBoard() {
+  const board = document.getElementById("board");
+  if (board.childElementCount) return;
+  SCENES.forEach((s, i) => {
+    const f = h("figure", "", board);
+    const fr = h("div", "frame", f); fr.setAttribute("aria-hidden", "true");
+    const st = makeStage(fr, i); st.render(s.t0 + s.still);
+    h("figcaption", "", f, `<b>${s.key === "end" ? "" : String(i + 1).padStart(2, "0") + " "}${s.label.toUpperCase()}</b>${s.text}`);
+  });
+}
+document.getElementById("playAnyway").onclick = () => { docEl.classList.remove("static"); stage.fit(); setPlaying(true); };
+
+document.fonts.ready.then(() => {
+  if (docEl.classList.contains("static")) { buildBoard(); playing = false; }
+  stage.fit(); draw();
+  if (playing) setPlaying(true);
+  window.filmReady = true;
+});
+</script>
+</body>
+</html>
