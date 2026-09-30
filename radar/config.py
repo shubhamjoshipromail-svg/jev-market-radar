@@ -28,3 +28,7 @@ DAILY_CAP_USD = float(os.getenv("RADAR_DAILY_CAP_USD", "1.0"))  # Jev spend cap 
 JEV_CONCURRENCY = int(os.getenv("RADAR_JEV_CONCURRENCY", "20"))
 NTFY_SERVER = os.getenv("NTFY_SERVER", "https://ntfy.sh")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
+# "auto": judge every incoming headline. "on_demand": judge only what visitors click/paste, plus AUTO_PER_HOUR
+# fresh headlines so the board stays alive. Ingest, prices, tracker and paper trading are free and always run.
+MODE = os.getenv("RADAR_MODE", "auto")
+AUTO_PER_HOUR = int(os.getenv("RADAR_AUTO_PER_HOUR", "4"))

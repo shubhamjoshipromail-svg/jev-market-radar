@@ -355,6 +355,45 @@ async def headline(payload: HeadlineIn, request: Request) -> dict:
     return await run_in_threadpool(_add_and_process, payload)
 
 
+@app.post("/api/judge/{headline_id}")
+async def judge_now(headline_id: int, request: Request) -> dict:
+    """Judge one already-ingested headline on demand (on_demand mode). Cached afterwards: nobody pays twice."""
+    with closing(connect()) as conn:
+        row = conn.execute("SELECT status FROM headlines WHERE id=?", (headline_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="headline not found")
+        done = conn.execute("SELECT 1 FROM judgments WHERE headline_id=? LIMIT 1", (headline_id,)).fetchone()
+        if done or row["status"] in ("done", "duplicate"):
+            return _feed_item(conn, headline_id)
+    _rate_limit(request)
+
+    def run() -> dict:
+        conn = connect()
+        try:
+            conn.execute("UPDATE headlines SET status='processing' WHERE id=?", (headline_id,))
+            conn.commit()
+            process_headline(conn, headline_id, requested=True)
+            return _feed_item(conn, headline_id)
+        finally:
+            conn.close()
+    return await run_in_threadpool(run)
+
+
+@app.get("/api/pending")
+def pending(limit: int = Query(default=60, ge=1, le=200)) -> list[dict]:
+    """Recent headlines that haven't been judged yet (on_demand mode): free to list, judged when clicked."""
+    with closing(connect()) as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT id, source, url, title, fetched_at, status FROM headlines WHERE status IN ('new','capped')"
+            " AND fetched_at > datetime('now','-12 hours') ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+@app.get("/api/mode")
+def mode() -> dict:
+    from radar.config import AUTO_PER_HOUR, DAILY_CAP_USD, MODE
+    return {"mode": MODE, "auto_per_hour": AUTO_PER_HOUR, "daily_cap_usd": DAILY_CAP_USD}
+
+
 @app.post("/api/feedback")
 def feedback(payload: FeedbackIn) -> dict:
     with closing(connect()) as conn:
@@ -373,10 +412,17 @@ def worker_loop(poll_seconds: float = 1.0) -> None:
     conn = connect()
     try:
         while True:
-            # atomic claim, so several workers can drain the queue in parallel without double-judging
+            # atomic claim, so several workers can drain the queue in parallel without double-judging.
+            # Visitor requests first; in on_demand mode only a small hourly budget of fresh headlines is auto-judged.
+            from radar.config import AUTO_PER_HOUR, MODE
+            allow_new = MODE == "auto" or conn.execute(
+                "SELECT count(DISTINCT headline_id) FROM judgments j JOIN headlines h ON h.id=j.headline_id"
+                " WHERE h.source<>'paste' AND h.status<>'requested' AND j.created_at > datetime('now','-1 hour')"
+            ).fetchone()[0] < AUTO_PER_HOUR
             row = conn.execute(
-                "UPDATE headlines SET status='processing' WHERE id=(SELECT id FROM headlines WHERE status='new'"
-                " ORDER BY id DESC LIMIT 1) RETURNING id"
+                "UPDATE headlines SET status='processing' WHERE id=(SELECT id FROM headlines WHERE status='requested'"
+                " OR (? AND status='new' AND fetched_at > datetime('now','-2 hours'))"
+                " ORDER BY status='requested' DESC, id DESC LIMIT 1) RETURNING id", (allow_new,)
             ).fetchone()
             conn.commit()
             if row is None:

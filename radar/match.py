@@ -135,7 +135,8 @@ async def _judge_all(headline: dict, markets: list[dict]) -> list[tuple[dict, di
         return await asyncio.gather(*(one(m) for m in markets))
 
 
-def process_headline(conn, headline_id: int, k: int = PREFILTER_K) -> list[int]:
+def process_headline(conn, headline_id: int, k: int = PREFILTER_K, requested: bool = False) -> list[int]:
+    """requested=True: a visitor asked (rate-limited upstream), so skip the feed spend cap."""
     h = conn.execute("SELECT * FROM headlines WHERE id=?", (headline_id,)).fetchone()
     if not h:
         return []
@@ -144,7 +145,7 @@ def process_headline(conn, headline_id: int, k: int = PREFILTER_K) -> list[int]:
     conn.commit()
     ids, new_alerts = [], []
     try:
-        if h["source"] != "paste" and DAILY_CAP_USD > 0:
+        if h["source"] != "paste" and not requested and DAILY_CAP_USD > 0:
             spent = conn.execute("SELECT COALESCE(sum(cost_usd),0) FROM judgments WHERE created_at >= date('now')").fetchone()[0]
             if spent >= DAILY_CAP_USD:
                 conn.execute("UPDATE headlines SET status='capped' WHERE id=?", (headline_id,))

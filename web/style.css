@@ -216,3 +216,8 @@ button, input { font: inherit; color: inherit; }
 .fx-sub { display: block; font-size: 12px; color: var(--ink-2); margin-top: 2px; }
 .facts { grid-template-columns: repeat(4, minmax(0, auto)); }
 @media (max-width: 900px) { .topbox { margin: 18px 16px 0; } .facts { grid-template-columns: 1fr 1fr; } }
+
+.pend-h { font-size: 11px; color: var(--ink-3); padding: 10px 12px 4px; background: var(--bg); }
+.feed li.pend .h { color: var(--ink-2); }
+.judge-btn { font: 500 11px var(--mono); border: 1px solid var(--line-2); border-radius: 4px; padding: 2px 7px; color: var(--ink-2); white-space: nowrap; }
+.feed li.pend button:hover .judge-btn { border-color: var(--ink); color: var(--ink); }

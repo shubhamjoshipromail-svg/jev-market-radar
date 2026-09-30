@@ -77,6 +77,7 @@ function summarize(it) {
 async function load() {
   try { S.feed = (await api("/api/feed?judged=true&limit=300")).filter(Boolean); } catch (e) { console.warn(e); }
   for (const it of S.feed) for (const j of it.judgments) j._paste = it.headline.source === "paste";
+  try { S.pending = await api("/api/pending?limit=60"); } catch { S.pending = []; }
   if (S.sel == null && S.feed.length) S.sel = (S.feed.find((it) => it.judgments.some((j) => j.alert)) || S.feed[0]).headline.id;
   renderAll();
 }
@@ -152,13 +153,18 @@ function miniBar(up, down) {
 function renderFeed() {
   const list = S.feed.map((it) => ({ it, ...summarize(it) })).filter((d) => S.filter === "all" || d.it.judgments.some((j) => ["settled", "early"].includes(verdict(j)) || (verdict(j) === "whatif" && Date.now() - new Date(d.it.headline.fetched_at) < 3600e3)));
   const ol = $("#feed");
+  const pend = S.filter === "all" ? (S.pending || []) : [];
+  const pendHtml = pend.length ? `<li class="pend-h">Not judged yet · judged when you click (results are cached)</li>` + pend.map((h) =>
+    `<li class="pend" data-pend="${h.id}"><button type="button"><span class="t">${hhmm(h.fetched_at)}</span><span class="h">${esc(h.title)}</span>
+      <span class="mini"><span class="judge-btn">Judge this</span></span><span class="s">${esc(src(h))}</span></button></li>`).join("") : "";
+  if (!list.length && pendHtml) { ol.innerHTML = pendHtml; return; }
   if (!list.length) { ol.innerHTML = `<li class="empty">${S.filter === "alerts" ? "Nothing needs a look right now. That\u2019s normal: alerts are rare on purpose. Switch to All headlines, or try an example above." : "Waiting for headlines…"}</li>`; return; }
   ol.innerHTML = list.map((d) => { const h = d.it.headline;
     return `<li data-id="${h.id}" class="${h.id === S.sel ? "sel" : ""} ${S.seen.size && !S.seen.has(h.id) ? "fresh" : ""}">
       <button type="button"><span class="t">${hhmm(h.fetched_at)}</span><span class="h">${esc(h.title)}</span>
       <span class="mini">${miniBar(d.up, d.down)}${(() => { const best = d.it.judgments.map(verdict).filter((v) => v && v !== "fyi").sort((x, y) => VERDICT[x].p - VERDICT[y].p)[0];
         return best ? `<span class="vlabel v-${best}">${VERDICT[best].t}</span>` : ""; })()}</span>
-      <span class="s">${esc(src(h))} · ${d.rel.length} of ${d.it.judgments.length} markets relevant</span></button></li>`; }).join("");
+      <span class="s">${esc(src(h))} · ${d.rel.length} of ${d.it.judgments.length} markets relevant</span></button></li>`; }).join("") + pendHtml;
   list.forEach((d) => S.seen.add(d.it.headline.id));
 }
 
@@ -286,7 +292,13 @@ function renderAll() { renderPulse(); renderFeed(); renderDetail(); }
 function select(id) { S.sel = id; renderAll(); if (innerWidth < 900) $("#detail").scrollIntoView({ behavior: "smooth" }); }
 
 // ---- events --------------------------------------------------------------------------------------
-$("#feed").addEventListener("click", (e) => { const li = e.target.closest("li[data-id]"); if (li) select(+li.dataset.id); });
+$("#feed").addEventListener("click", async (e) => {
+  const p = e.target.closest("li[data-pend]");
+  if (p) { const b = p.querySelector(".judge-btn"); b.textContent = "Judging…";
+    try { const it = await api(`/api/judge/${p.dataset.pend}`, { method: "POST" }); S.sel = it.headline.id; await load(); }
+    catch (err) { b.textContent = /429/.test(err.message) || /limit/i.test(err.message) ? "Limit reached, try later" : "Failed"; }
+    return; }
+  const li = e.target.closest("li[data-id]"); if (li) select(+li.dataset.id); });
 $("#detail").addEventListener("click", async (e) => {
   const v = e.target.closest(".vote button");
   if (v) { const id = +v.parentElement.dataset.alert, vote = +v.dataset.v; S.votes[id] = vote; renderDetail();
