@@ -294,6 +294,36 @@ def top(hours: int = Query(default=24, ge=1, le=168), limit: int = Query(default
         return leaderboard(conn, hours, limit)
 
 
+@app.get("/api/paper")
+def paper() -> dict:
+    """Simulated account that follows Radar's #1 pick per headline. No real money."""
+    from radar import paper as P
+    with closing(connect()) as conn:
+        q = lambda sql, *a: [dict(r) for r in conn.execute(sql, a)]
+        trades = q("SELECT t.*, m.question, m.url, h.title FROM paper_trades t JOIN markets m ON m.id=t.market_id"
+                   " JOIN headlines h ON h.id=t.headline_id ORDER BY t.id DESC")
+        for t in trades:
+            px = t["exit_price"] if t["status"] == "closed" else t["last_price"]
+            t["value"] = t["stake"] / t["entry_price"] * (px or 0)
+            t["pnl_now"] = t["pnl"] if t["status"] == "closed" else t["value"] - t["stake"]
+        eq = q("SELECT t, equity FROM paper_equity ORDER BY t")
+        step = max(1, len(eq) // 400)
+        closed = [t for t in trades if t["status"] == "closed"]
+        bt = conn.execute("SELECT v FROM kv WHERE k='backtest'").fetchone()
+        started = conn.execute("SELECT v FROM kv WHERE k='paper_started'").fetchone()
+        return {
+            "rules": {"stake": P.STAKE, "start_equity": P.START_EQUITY, "min_score": P.MIN_SCORE, "hold_h": P.HOLD_H,
+                      "price_band": P.LIVE_PRICE_BAND, "max_spread": P.LIVE_MAX_SPREAD,
+                      "min_volume_24h": P.LIVE_MIN_VOLUME_24H, "min_magnitude": P.LIVE_MIN_MAGNITUDE},
+            "started": started[0] if started else None,
+            "equity": eq[-1]["equity"] if eq else P.START_EQUITY,
+            "equity_series": eq[::step] + (eq[-1:] if eq and (len(eq) - 1) % step else []),
+            "open": [t for t in trades if t["status"] == "open"], "closed": closed,
+            "wins": sum(1 for t in closed if (t["pnl"] or 0) > 0),
+            "backtest": json.loads(bt[0]) if bt else None,
+        }
+
+
 @app.get("/api/markets")
 def markets(q: str = Query(default="", max_length=500)) -> list[dict]:
     with closing(connect()) as conn:

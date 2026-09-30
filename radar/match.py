@@ -14,7 +14,7 @@ import httpx
 from rank_bm25 import BM25Okapi
 
 from radar import alerts, jev, llm
-from radar.config import JEV_CONCURRENCY, PREFILTER_K
+from radar.config import DAILY_CAP_USD, JEV_CONCURRENCY, PREFILTER_K
 from radar.db import connect, now
 from radar.judge import judge_pair
 
@@ -144,6 +144,11 @@ def process_headline(conn, headline_id: int, k: int = PREFILTER_K) -> list[int]:
     conn.commit()
     ids, new_alerts = [], []
     try:
+        if h["source"] != "paste" and DAILY_CAP_USD > 0:
+            spent = conn.execute("SELECT COALESCE(sum(cost_usd),0) FROM judgments WHERE created_at >= date('now')").fetchone()[0]
+            if spent >= DAILY_CAP_USD:
+                conn.execute("UPDATE headlines SET status='capped' WHERE id=?", (headline_id,))
+                return []
         if h["source"] != "paste":  # a pasted headline is always judged
             dup = find_duplicate(conn, h)
             if dup:

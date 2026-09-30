@@ -37,6 +37,7 @@ button, input { font: inherit; color: inherit; }
 .live { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); align-self: center; }
 .live.on { background: var(--good); animation: breathe 2.4s ease-in-out infinite; }
 @keyframes breathe { 50% { opacity: .35; } }
+.nav { display: flex; gap: 6px; }
 .nav a { font-size: 13px; color: var(--ink-2); text-decoration: none; border: 1px solid var(--line-2); border-radius: 6px; padding: 4px 10px; }
 .nav a:hover { color: var(--ink); border-color: var(--ink-3); }
 .kpis { display: flex; margin-left: auto !important; flex-wrap: wrap; gap: 4px 28px; margin: 0; }

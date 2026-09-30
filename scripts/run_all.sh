@@ -30,6 +30,10 @@ pids+=("$!")
 pids+=("$!")
 "$PYTHON" -m radar.tracker &
 pids+=("$!")
+"$PYTHON" -m radar.paper --loop 120 &
+pids+=("$!")
+( while true; do "$PYTHON" -m radar.paper --backtest --hours 24 --min-score 60 >/dev/null 2>&1; sleep 1800; done ) &
+pids+=("$!")
 if [[ -n "${NTFY_TOPIC:-}" ]] || grep -qs "^NTFY_TOPIC=." "$ROOT/../../.env"; then
   "$PYTHON" -m radar.notify &
   pids+=("$!")

@@ -87,3 +87,26 @@ CREATE TABLE IF NOT EXISTS feedback (
 CREATE INDEX IF NOT EXISTS idx_headlines_status ON headlines(status);
 CREATE INDEX IF NOT EXISTS idx_judgments_headline ON judgments(headline_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at);
+
+CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+
+CREATE TABLE IF NOT EXISTS paper_trades (      -- simulated trades; no real money
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  headline_id   INTEGER NOT NULL,
+  judgment_id   INTEGER NOT NULL,
+  market_id     TEXT NOT NULL,
+  side          TEXT NOT NULL,             -- YES | NO (the side the news favours)
+  score         INTEGER,
+  stake         REAL NOT NULL,
+  entry_price   REAL NOT NULL,             -- price paid for our side incl. half spread
+  entry_at      TEXT NOT NULL,
+  half_spread   REAL,
+  last_price    REAL,                      -- latest price of our side
+  exit_price    REAL,
+  exit_at       TEXT,
+  exit_reason   TEXT,
+  pnl           REAL,
+  status        TEXT NOT NULL               -- open | closed
+);
+
+CREATE TABLE IF NOT EXISTS paper_equity (t TEXT NOT NULL, equity REAL, realized REAL, unrealized REAL);
