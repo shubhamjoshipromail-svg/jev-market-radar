@@ -3,6 +3,9 @@ import json
 
 from radar import jev
 
+# Bump on any change to QUESTIONS; stored per judgment so the alert log can be split by prompt version.
+PROMPT_VERSION = "v2"
+
 EFFECTS = ["resolves_yes", "resolves_no", "raises_yes", "lowers_yes", "no_effect"]
 
 QUESTIONS = {
@@ -99,5 +102,5 @@ async def judge_pair(http, headline: dict, market: dict) -> dict:
         "latency_ms": res["latency_ms"],
         "input_tokens": res["usage"].get("input_tokens"),
         "cost_usd": res["cost_usd"],
-        "model": res["model"],
+        "model": f'{res["model"]}+{PROMPT_VERSION}',
     }

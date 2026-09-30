@@ -1,0 +1,56 @@
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #14161a; --muted: #6b7280; --line: #e4e7ec;
+  --yes: #0f9d58; --no: #d93025; --warn: #b26a00; --accent: #3b5bdb; --chip: #eef1f6;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d0f12; --panel: #15181d; --ink: #e8eaed; --muted: #8b93a1; --line: #242a33;
+    --yes: #34c77b; --no: #ff6b61; --warn: #f0a93b; --accent: #7c9cff; --chip: #1e232b;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, system-ui, sans-serif; }
+.top { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center;
+  justify-content: space-between; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.brand small { font-weight: 400; color: var(--muted); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--yes); box-shadow: 0 0 0 4px color-mix(in srgb, var(--yes) 25%, transparent); }
+.stats { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; }
+.stats div { display: flex; flex-direction: column; }
+.stats dt { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.stats dd { margin: 0; font: 600 15px var(--mono); }
+main { max-width: 980px; margin: 0 auto; padding: 16px; }
+.paste { display: flex; gap: 8px; }
+.paste input { flex: 1; min-width: 0; padding: 12px 14px; font-size: 15px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); }
+.paste button { padding: 0 18px; border: 0; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+.paste button:disabled { opacity: .6; cursor: progress; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 2px; color: var(--muted); font-size: 13px; align-items: center; }
+.bar input[type=range] { vertical-align: middle; width: 110px; }
+.feed { display: flex; flex-direction: column; gap: 10px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.card.fresh { animation: flash 1.2s ease-out; }
+@keyframes flash { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: 0 0 0 0 transparent; } }
+.head { all: unset; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 12px 14px; cursor: pointer; width: 100%; box-sizing: border-box; }
+.src { grid-row: span 2; align-self: start; font: 11px var(--mono); color: var(--muted); background: var(--chip); padding: 2px 6px; border-radius: 6px; }
+.title { font-weight: 600; }
+.meta { color: var(--muted); font-size: 12px; }
+.judgments { list-style: none; margin: 0; padding: 0 0 6px; border-top: 1px solid var(--line); }
+.card.collapsed .judgments { display: none; }
+.j { display: grid; grid-template-columns: 26px 1fr auto; gap: 4px 10px; padding: 8px 14px; align-items: center; }
+.j + .j { border-top: 1px dashed var(--line); }
+.arrow { font-size: 18px; text-align: center; }
+.up { color: var(--yes); } .down { color: var(--no); } .flat { color: var(--muted); }
+.q a { color: inherit; text-decoration: none; } .q a:hover { text-decoration: underline; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.chip { font: 11px var(--mono); background: var(--chip); padding: 1px 6px; border-radius: 6px; color: var(--muted); }
+.chip.alert { background: var(--warn); color: #111; font-weight: 700; }
+.price { font: 600 15px var(--mono); text-align: right; }
+.price small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
+.vote { display: flex; gap: 4px; justify-content: flex-end; margin-top: 2px; }
+.vote button { border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 6px; cursor: pointer; padding: 0 6px; }
+.vote button.done { background: var(--chip); }
+.empty { color: var(--muted); padding: 30px; text-align: center; }
+@media (max-width: 600px) { .j { grid-template-columns: 22px 1fr; } .price { grid-column: 2; text-align: left; } }

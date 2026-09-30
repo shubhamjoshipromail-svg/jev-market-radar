@@ -3,40 +3,55 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Market Radar</title>
+<title>Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="dot" id="live"></span> Market Radar <small>Jev × Polymarket</small></div>
-  <dl class="stats" id="stats"></dl>
+  <div class="brand">
+    <span class="live" id="live" title="Live stream"></span>
+    <strong>Radar</strong><span class="sub">news → Polymarket, judged by Jev</span>
+  </div>
+  <dl class="kpis" id="kpis"></dl>
 </header>
 
-<main>
-  <form id="paste" class="paste">
-    <input id="title" placeholder="Paste a breaking headline…" autocomplete="off" required>
-    <button type="submit">Judge it</button>
-  </form>
+<form class="cmd" id="cmd" autocomplete="off">
+  <span class="kbd">/</span>
+  <input id="cmdInput" placeholder="Paste a headline to judge it against every live market">
+  <button type="submit" id="cmdBtn">Judge</button>
+</form>
 
-  <div class="bar">
-    <label><input type="checkbox" id="onlyJudged" checked> Only judged headlines</label>
-    <label><input type="checkbox" id="onlyAlerts"> Only with alerts</label>
-    <label>Min relevance <input type="range" id="minRel" min="0" max="1" step="0.05" value="0.5"><span id="minRelV">0.50</span></label>
+<section class="pulse" aria-label="Headline impact over time">
+  <div class="pulse-head">
+    <h2>Impact pulse</h2>
+    <p class="legend">
+      <span><i class="sw yes"></i>markets pushed toward YES</span>
+      <span><i class="sw no"></i>toward NO</span>
+      <span><i class="sw alert"></i>alert fired</span>
+    </p>
+    <div class="seg" id="range" role="group" aria-label="Time range">
+      <button data-h="1">1h</button><button data-h="6" class="on">6h</button><button data-h="24">24h</button>
+    </div>
   </div>
+  <div class="pulse-plot" id="pulse"><div class="tip" id="tip" hidden></div></div>
+</section>
 
-  <section id="feed" class="feed"></section>
+<main class="grid">
+  <section class="feed-col">
+    <div class="feed-head">
+      <div class="seg" id="filter" role="group" aria-label="Filter">
+        <button data-f="all" class="on">All judged</button><button data-f="alerts">Alerts only</button>
+      </div>
+      <label class="rel">Relevance ≥ <output id="minRelV">0.70</output>
+        <input type="range" id="minRel" min="0.3" max="0.95" step="0.05" value="0.7"></label>
+    </div>
+    <ol class="feed" id="feed"></ol>
+  </section>
+  <section class="detail" id="detail" aria-live="polite"></section>
 </main>
-
-<template id="tpl-card">
-  <article class="card">
-    <button class="head" type="button">
-      <span class="src"></span>
-      <span class="title"></span>
-      <span class="meta"></span>
-    </button>
-    <ol class="judgments"></ol>
-  </article>
-</template>
 
 <script src="app.js"></script>
 </body>

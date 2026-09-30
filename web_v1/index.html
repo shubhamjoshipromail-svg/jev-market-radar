@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Market Radar</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="dot" id="live"></span> Market Radar <small>Jev × Polymarket</small></div>
+  <dl class="stats" id="stats"></dl>
+</header>
+
+<main>
+  <form id="paste" class="paste">
+    <input id="title" placeholder="Paste a breaking headline…" autocomplete="off" required>
+    <button type="submit">Judge it</button>
+  </form>
+
+  <div class="bar">
+    <label><input type="checkbox" id="onlyJudged" checked> Only judged headlines</label>
+    <label><input type="checkbox" id="onlyAlerts"> Only with alerts</label>
+    <label>Min relevance <input type="range" id="minRel" min="0" max="1" step="0.05" value="0.5"><span id="minRelV">0.50</span></label>
+  </div>
+
+  <section id="feed" class="feed"></section>
+</main>
+
+<template id="tpl-card">
+  <article class="card">
+    <button class="head" type="button">
+      <span class="src"></span>
+      <span class="title"></span>
+      <span class="meta"></span>
+    </button>
+    <ol class="judgments"></ol>
+  </article>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

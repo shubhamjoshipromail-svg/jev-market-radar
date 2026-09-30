@@ -1,131 +1,225 @@
-// Market Radar dashboard. Talks to the API contract in PLAN.md; falls back to mock_feed.json with no server.
-const $ = (s) => document.querySelector(s);
-const state = { feed: [], seen: new Set(), open: new Set(), votes: {} };
-const EFFECT = {
-  resolves_yes: ["▲▲", "up", "resolves YES"], raises_yes: ["▲", "up", "YES more likely"],
-  resolves_no: ["▼▼", "down", "resolves NO"], lowers_yes: ["▼", "down", "YES less likely"],
-  no_effect: ["·", "flat", "no effect"],
-};
-const pct = (p) => (p == null ? "–" : `${Math.round(p * 100)}¢`);
-const ago = (iso) => {
-  if (!iso) return "";
-  const s = (Date.now() - new Date(iso)) / 1000;
-  return s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : iso.slice(0, 10);
-};
+// Radar dashboard: pulse chart + feed + detail. Data contract: PLAN.md (/api/feed?judged=1, /api/stats, /api/stream).
+const $ = (s, r = document) => r.querySelector(s);
+const NS = "http://www.w3.org/2000/svg";
+const S = { feed: [], sel: null, hours: 6, filter: "all", minRel: 0.7, seen: new Set(), open: new Set(), votes: {} };
+const DIR = { resolves_yes: 1, raises_yes: 1, resolves_no: -1, lowers_yes: -1, no_effect: 0 };
+const LABEL = { resolves_yes: "Resolves YES", raises_yes: "YES more likely", resolves_no: "Resolves NO",
+  lowers_yes: "YES less likely", no_effect: "No effect" };
+const ORDER = ["resolves_yes", "raises_yes", "no_effect", "lowers_yes", "resolves_no"];
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const cents = (p) => (p == null ? "–" : `${(p * 100).toFixed(p < 0.1 || p > 0.9 ? 1 : 0)}¢`);
+const hhmm = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1e3;
+  return s < 60 ? "now" : s < 3600 ? `${~~(s / 60)}m` : s < 86400 ? `${~~(s / 3600)}h` : `${~~(s / 86400)}d`; };
+const src = (h) => (h.source || "").replace(/^(rss|bluesky):/, "").replace(/\.(com|org|social|bsky\.social)$/, "");
+const svg = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; };
 
-async function api(path, opts) {
-  const r = await fetch(path, opts);
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-  return r.json();
+async function api(path, opts) { const r = await fetch(path, opts); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+
+// ---- derived per-headline numbers --------------------------------------------------------------
+function summarize(it) {
+  const rel = it.judgments.filter((j) => j.relevant >= S.minRel);
+  return { rel, up: rel.filter((j) => DIR[j.effect] > 0).length, down: rel.filter((j) => DIR[j.effect] < 0).length,
+    alerts: it.judgments.filter((j) => j.alert).length, t: new Date(it.headline.fetched_at) };
 }
 
-async function loadFeed() {
-  try { state.feed = await api("/api/feed?limit=100"); }
-  catch { state.feed = await api("mock_feed.json"); }
-  render();
+// ---- data --------------------------------------------------------------------------------------
+async function load() {
+  try { S.feed = (await api("/api/feed?judged=true&limit=300")).filter(Boolean); } catch (e) { console.warn(e); }
+  if (S.sel == null && S.feed.length) S.sel = (S.feed.find((it) => it.judgments.some((j) => j.alert)) || S.feed[0]).headline.id;
+  renderAll();
 }
-
 async function loadStats() {
   try {
     const s = await api("/api/stats");
-    const rows = [
-      ["Headlines", s.headlines], ["Judgments", s.judgments], ["Alerts", s.alerts],
-      ["Jev cost", s.cost_usd != null ? `$${Number(s.cost_usd).toFixed(4)}` : "–"],
-      ["p50 latency", s.p50_latency_ms != null ? `${Math.round(s.p50_latency_ms)}ms` : "–"],
-      ["10-min hit rate", s.hit_rate_10m != null ? `${Math.round(s.hit_rate_10m * 100)}%` : "–"],
-    ];
-    $("#stats").innerHTML = rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v ?? "–"}</dd></div>`).join("");
-  } catch { $("#stats").innerHTML = `<div><dt>Mode</dt><dd>mock data</dd></div>`; }
+    const k = [["Headlines", s.headlines], ["Judgments", s.judgments?.toLocaleString()], ["Alerts", s.alerts],
+      ["Right direction · 10m", s.direction_right_10m == null ? "–" : `${Math.round(s.direction_right_10m * 100)}%`],
+      ["Price moved at all", s.moved_share_10m == null ? "–" : `${Math.round(s.moved_share_10m * 100)}% of ${s.checked_10m}`],
+      ["Jev spend", `$${(s.cost_usd || 0).toFixed(3)}`], ["p50 / call", s.p50_latency_ms ? `${Math.round(s.p50_latency_ms)}ms` : "–"]];
+    $("#kpis").innerHTML = k.map(([a, b]) => `<div><dt>${a}</dt><dd>${b ?? "–"}</dd></div>`).join("");
+  } catch {}
 }
 
-function judgmentRow(j) {
-  const [arrow, cls, label] = EFFECT[j.effect] || EFFECT.no_effect;
-  const a = j.alert;
-  const voted = a && state.votes[a.id];
-  return `<li class="j">
-    <span class="arrow ${cls}" title="${label}">${arrow}</span>
-    <div class="q"><a href="${esc(j.market.url)}" target="_blank" rel="noopener">${esc(j.market.question)}</a>
-      <div class="chips">
-        ${a ? `<span class="chip alert">${a.kind === "stale_price" ? "STALE PRICE" : "MOVER"}</span>` : ""}
-        <span class="chip">${label}</span>
-        <span class="chip">rel ${j.relevant?.toFixed(2)}</span>
-        <span class="chip">conf ${j.effect_conf?.toFixed(2) ?? "–"}</span>
-        <span class="chip">strength ${j.strength?.toFixed(1)}/2</span>
-        <span class="chip">${j.latency_ms}ms</span>
-      </div></div>
-    <div class="price">${pct(j.market.yes_price)}<small>YES now</small>
-      ${a ? `<div class="vote" data-alert="${a.id}">
-        <button data-v="1" class="${voted === 1 ? "done" : ""}" title="Useful">👍</button>
-        <button data-v="-1" class="${voted === -1 ? "done" : ""}" title="Wrong">👎</button></div>` : ""}
+// ---- pulse: diverging barcode of headline impact over time ------------------------------------
+function renderPulse() {
+  const box = $("#pulse"), tip = $("#tip");
+  box.querySelector("svg")?.remove();
+  const W = box.clientWidth, H = box.clientHeight, m = { l: 34, r: 8, t: 10, b: 20 };
+  const t1 = Date.now(), t0 = t1 - S.hours * 3600e3;
+  const items = S.feed.map((it) => ({ it, ...summarize(it) })).filter((d) => d.t >= t0);
+  const maxN = Math.max(3, ...items.map((d) => Math.max(d.up, d.down)));
+  const x = (t) => m.l + ((t - t0) / (t1 - t0)) * (W - m.l - m.r);
+  const mid = m.t + (H - m.t - m.b) / 2, half = (H - m.t - m.b) / 2 - 6;
+  const y = (n) => (n / maxN) * half;
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${items.length} judged headlines` });
+  box.prepend(root);
+  // grid + axis
+  const g = svg("g", { class: "grid" }, root), ax = svg("g", { class: "axis" }, root);
+  const step = S.hours <= 1 ? 10 * 60e3 : S.hours <= 6 ? 3600e3 : 4 * 3600e3;
+  for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
+    svg("line", { x1: x(t), x2: x(t), y1: m.t, y2: H - m.b }, g);
+    svg("text", { x: x(t), y: H - 5, "text-anchor": "middle" }, ax).textContent = hhmm(new Date(t).toISOString());
+  }
+  for (const n of [maxN, -maxN]) svg("text", { x: m.l - 6, y: mid - Math.sign(n) * y(Math.abs(n)) + 3, "text-anchor": "end" }, ax).textContent = Math.abs(n);
+  svg("line", { class: "mid", x1: m.l, x2: W - m.r, y1: mid, y2: mid }, root);
+  const bw = Math.max(2, Math.min(6, (W - m.l - m.r) / (S.hours * 30)));
+  const cross = svg("line", { class: "cross", y1: m.t, y2: H - m.b, visibility: "hidden" }, root);
+  for (const d of items) {
+    const cx = x(+d.t), sel = d.it.headline.id === S.sel;
+    const gg = svg("g", { class: "bar", opacity: S.sel && !sel ? 0.55 : 1 }, root);
+    if (d.up) svg("rect", { x: cx - bw / 2, y: mid - y(d.up) - 1, width: bw, height: y(d.up), rx: Math.min(2, bw / 2), fill: css("--yes") }, gg);
+    if (d.down) svg("rect", { x: cx - bw / 2, y: mid + 1, width: bw, height: y(d.down), rx: Math.min(2, bw / 2), fill: css("--no") }, gg);
+    if (!d.up && !d.down) svg("rect", { x: cx - bw / 2, y: mid - 1, width: bw, height: 2, fill: css("--line-2") }, gg);
+    if (d.alerts) svg("rect", { x: cx - 3.5, y: mid - y(d.up) - 13, width: 7, height: 7, fill: css("--warn"),
+      transform: `rotate(45 ${cx} ${mid - y(d.up) - 9.5})` }, gg);
+    if (sel) svg("rect", { x: cx - bw / 2 - 2, y: m.t, width: bw + 4, height: H - m.t - m.b, fill: "none", stroke: css("--ink"), rx: 3 }, gg);
+    const hit = svg("rect", { class: "hit", x: cx - 6, y: m.t, width: 12, height: H - m.t - m.b }, root);
+    hit.addEventListener("mouseenter", () => {
+      cross.setAttribute("x1", cx); cross.setAttribute("x2", cx); cross.setAttribute("visibility", "visible");
+      tip.hidden = false;
+      tip.innerHTML = `<b>${esc(d.it.headline.title)}</b><div class="row"><span>${hhmm(d.it.headline.fetched_at)}</span>
+        <span>▲ ${d.up}</span><span>▼ ${d.down}</span>${d.alerts ? `<span>◆ ${d.alerts} alert${d.alerts > 1 ? "s" : ""}</span>` : ""}</div>`;
+      const tx = Math.min(Math.max(cx - 160, 0), W - 320);
+      tip.style.left = `${tx}px`; tip.style.top = `${m.t}px`;
+    });
+    hit.addEventListener("mouseleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+    hit.addEventListener("click", () => select(d.it.headline.id));
+  }
+  if (!items.length) svg("text", { x: W / 2, y: mid - 8, "text-anchor": "middle", class: "axis", fill: css("--ink-3") }, root)
+    .textContent = "No judged headlines in this window yet";
+}
+
+// ---- feed list ------------------------------------------------------------------------------------
+function miniBar(up, down) {
+  const w = 52, s = Math.max(up + down, 1), r = svg("svg", { width: w, height: 6, "aria-hidden": "true" });
+  const uw = (up / s) * w, dw = (down / s) * w;
+  if (!up && !down) svg("rect", { x: 0, y: 2, width: w, height: 2, rx: 1, fill: css("--line-2") }, r);
+  if (up) svg("rect", { x: 0, y: 0, width: Math.max(uw - (down ? 1 : 0), 2), height: 6, rx: 2, fill: css("--yes") }, r);
+  if (down) svg("rect", { x: uw + (up ? 1 : 0), y: 0, width: Math.max(dw - (up ? 1 : 0), 2), height: 6, rx: 2, fill: css("--no") }, r);
+  return r.outerHTML;
+}
+function renderFeed() {
+  const list = S.feed.map((it) => ({ it, ...summarize(it) })).filter((d) => S.filter === "all" || d.alerts);
+  const ol = $("#feed");
+  if (!list.length) { ol.innerHTML = `<li class="empty">${S.filter === "alerts" ? "No alerts yet." : "Waiting for headlines…"}</li>`; return; }
+  ol.innerHTML = list.map((d) => { const h = d.it.headline;
+    return `<li data-id="${h.id}" class="${h.id === S.sel ? "sel" : ""} ${S.seen.size && !S.seen.has(h.id) ? "fresh" : ""}">
+      <button type="button"><span class="t">${hhmm(h.fetched_at)}</span><span class="h">${esc(h.title)}</span>
+      <span class="mini">${miniBar(d.up, d.down)}${d.alerts ? `<span class="badge">${d.alerts} ALERT${d.alerts > 1 ? "S" : ""}</span>` : ""}</span>
+      <span class="s">${esc(src(h))} · ${d.rel.length} of ${d.it.judgments.length} markets relevant</span></button></li>`; }).join("");
+  list.forEach((d) => S.seen.add(d.it.headline.id));
+}
+
+// ---- detail panel ----------------------------------------------------------------------------------
+function dist(probs) {
+  const col = { resolves_yes: css("--yes"), raises_yes: css("--yes-soft"), no_effect: css("--mid"),
+    lowers_yes: css("--no-soft"), resolves_no: css("--no") };
+  return `<div class="dist" role="img" aria-label="Effect probabilities">${ORDER.map((k) =>
+    `<i style="flex:${Math.max(probs?.[k] || 0, 0.001)};background:${col[k]}" title="${LABEL[k]} ${Math.round((probs?.[k] || 0) * 100)}%"></i>`).join("")}</div>
+    <div class="dist-l"><span>YES ◂</span><span>no effect</span><span>▸ NO</span></div>`;
+}
+function reaction(a) {
+  // price at alert, then the tracker's checks at +1/+5/+10/+60 min, on a compressed time axis
+  const pts = [{ m: 0, p: a.price_at_alert }, ...(a.checks || []).map((c) => ({ m: c.offset_min, p: c.price }))].filter((d) => d.p != null);
+  const W = 250, H = 64, pad = { l: 4, r: 30, t: 8, b: 14 };
+  const xm = (m) => pad.l + (Math.sqrt(m) / Math.sqrt(60)) * (W - pad.l - pad.r);
+  const ps = pts.map((d) => d.p), lo = Math.min(...ps) - 0.02, hi = Math.max(...ps) + 0.02;
+  const yp = (p) => pad.t + (1 - (p - lo) / (hi - lo || 1)) * (H - pad.t - pad.b);
+  const color = a.direction > 0 ? css("--yes") : css("--no");
+  const last = pts[pts.length - 1], moved = last && pts.length > 1 ? (last.p - a.price_at_alert) * a.direction : null;
+  const path = pts.map((d, i) => `${i ? "L" : "M"}${xm(d.m).toFixed(1)},${yp(d.p).toFixed(1)}`).join("");
+  return `<svg class="react" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Price after alert">
+    <line class="base" x1="${pad.l}" x2="${W - pad.r}" y1="${yp(a.price_at_alert)}" y2="${yp(a.price_at_alert)}"/>
+    ${[0, 1, 5, 10, 60].map((mm) => `<text x="${xm(mm)}" y="${H - 2}" text-anchor="middle">${mm ? `+${mm}` : "0"}</text>`).join("")}
+    <path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${pts.map((d) => `<circle cx="${xm(d.m)}" cy="${yp(d.p)}" r="3.5" fill="${color}" stroke="${css("--surface")}" stroke-width="2"/>`).join("")}
+    ${last ? `<text x="${W - pad.r + 4}" y="${yp(last.p) + 3}" text-anchor="start">${cents(last.p)}</text>` : ""}
+  </svg>${pts.length < 2 ? `<div class="verdict">waiting for the +1 min check…</div>`
+    : `<div class="verdict ${moved > 0 ? "hit" : "miss"}">${moved > 0 ? "✓ moved as predicted" : moved === 0 ? "– no move yet" : "✕ moved against"} (${moved > 0 ? "+" : ""}${(moved * 100).toFixed(1)}¢)</div>`}`;
+}
+function renderDetail() {
+  const box = $("#detail"), it = S.feed.find((x) => x.headline.id === S.sel);
+  if (!it) { box.innerHTML = `<p class="none">Select a headline, or paste one above.</p>`; return; }
+  const h = it.headline, d = summarize(it);
+  const js = [...it.judgments].sort((a, b) => (!!b.alert - !!a.alert) || b.relevant - a.relevant);
+  const shown = js.filter((j) => j.relevant >= S.minRel || j.alert);
+  const lat = it.judgments.map((j) => j.latency_ms).sort((a, b) => a - b);
+  S.firstAlert = shown.find((j) => j.alert)?.id; // only the top alert opens by default
+  box.innerHTML = `<div class="d-head">
+      <div class="meta"><span>${esc(src(h))}</span><span>${hhmm(h.fetched_at)} · ${ago(h.fetched_at)} ago</span>
+      ${h.url ? `<a href="${esc(h.url)}" target="_blank" rel="noopener">source ↗</a>` : ""}</div>
+      <h1>${esc(h.title)}</h1>
+      <div class="d-kpis"><span><b>${it.judgments.length}</b>markets judged</span><span><b>${d.rel.length}</b>relevant</span>
+      <span><b>${d.up}</b>toward YES</span><span><b>${d.down}</b>toward NO</span><span><b>${d.alerts}</b>alerts</span>
+      <span><b>${lat.length ? lat[lat.length >> 1] : "–"}ms</b>median call</span></div></div>
+    ${shown.length ? `<ol class="mk">${shown.map((j) => row(j)).join("")}</ol>`
+      : `<p class="none">None of the ${it.judgments.length} candidate markets cleared relevance ${S.minRel.toFixed(2)}.</p>`}`;
+}
+function row(j) {
+  const dir = DIR[j.effect] || 0, a = j.alert, open = S.open.has(j.id) || (j.id === S.firstAlert && !S.open.has(-j.id));
+  const str = Math.round(j.strength ?? 0), moved = j.market.yes_price != null && j.yes_price_at != null ? j.market.yes_price - j.yes_price_at : 0;
+  return `<li data-j="${j.id}" class="${open ? "open" : ""}">
+    <button class="mk-row" type="button">
+      <span class="dir ${dir > 0 ? "up" : dir < 0 ? "down" : "flat"}" aria-label="${LABEL[j.effect]}">${dir > 0 ? "▲" : dir < 0 ? "▼" : "·"}</span>
+      <span class="q">${esc(j.market.question)}<span class="fx">
+        ${a ? `<span class="al">${a.kind === "stale_price" ? "Stale price" : "Mover"}</span>` : ""}
+        <span>${LABEL[j.effect]}${j.market.outcomes && j.market.outcomes[0] !== "Yes" ? ` (YES = ${esc(j.market.outcomes[0])})` : ""}</span>
+        <span>conf ${(j.effect_conf ?? 0).toFixed(2)}</span>
+        ${j.same_period != null && j.same_period < 0.5 ? `<span class="warn" title="Jev thinks the news is about a different date/meeting">timing mismatch</span>` : ""}
+        ${j.market.is_game ? `<span class="warn" title="Single-game market: shown, never alerted">game market</span>` : ""}</span></span>
+      <span class="meter"><span>relevance ${j.relevant.toFixed(2)}</span><span class="bar"><i style="width:${j.relevant * 100}%"></i></span>
+        <span class="dots" title="Strength: speculation → developing → settled fact">${[0, 1, 2].map((i) => `<i class="${i <= str ? "on" : ""}"></i>`).join("")}</span></span>
+      <span class="px"><b>${cents(j.market.yes_price)}</b><small>${Math.abs(moved) >= 0.005 ? `${moved > 0 ? "+" : ""}${(moved * 100).toFixed(1)}¢ since` : "YES now"}</small></span>
+    </button>
+    <div class="mk-more">
+      <div><div class="side"><h3>Resolution rules</h3></div><div class="rules">${esc(j.market.rules)}</div>
+        <p class="s" style="margin:8px 0 0"><a href="${esc(j.market.url)}" target="_blank" rel="noopener">Open on Polymarket ↗</a></p></div>
+      <div class="side"><h3>How Jev split its answer</h3>${dist(j.effect_probs)}
+        ${a ? `<h3>Price since alert</h3>${reaction(a)}
+        <div class="vote" data-alert="${a.id}"><button data-v="1" class="${S.votes[a.id] === 1 ? "on" : ""}">Useful</button>
+        <button data-v="-1" class="${S.votes[a.id] === -1 ? "on" : ""}">Wrong</button></div>` : ""}</div>
     </div></li>`;
 }
 
-function render() {
-  const onlyJudged = $("#onlyJudged").checked, onlyAlerts = $("#onlyAlerts").checked;
-  const minRel = +$("#minRel").value;
-  $("#minRelV").textContent = minRel.toFixed(2);
-  const items = state.feed.filter((it) => it && (!onlyJudged || it.judgments.length) &&
-    (!onlyAlerts || it.judgments.some((j) => j.alert)));
-  const feed = $("#feed");
-  if (!items.length) { feed.innerHTML = `<p class="empty">Nothing yet. Paste a headline above, or wait for the news feed.</p>`; return; }
-  feed.replaceChildren(...items.map((it) => {
-    const h = it.headline, card = $("#tpl-card").content.firstElementChild.cloneNode(true);
-    const shown = it.judgments.filter((j) => j.relevant >= minRel || j.alert);
-    const alerts = it.judgments.filter((j) => j.alert).length;
-    card.querySelector(".src").textContent = (h.source || "").replace(/^(rss|bluesky):/, "");
-    card.querySelector(".title").textContent = h.title;
-    card.querySelector(".meta").textContent = [ago(h.published_at || h.fetched_at),
-      it.judgments.length ? `${it.judgments.length} markets judged` : h.status,
-      shown.length ? `${shown.length} relevant` : "", alerts ? `${alerts} alert${alerts > 1 ? "s" : ""}` : ""]
-      .filter(Boolean).join(" · ");
-    card.querySelector(".judgments").innerHTML = shown.length ? shown.map(judgmentRow).join("")
-      : `<li class="j"><span></span><span class="meta">No market above relevance ${minRel.toFixed(2)}</span></li>`;
-    if (!state.open.has(h.id) && !(alerts || state.open.size === 0 && it === items[0])) card.classList.add("collapsed");
-    if (!state.seen.has(h.id)) { if (state.seen.size) card.classList.add("fresh"); state.seen.add(h.id); }
-    card.querySelector(".head").onclick = () => {
-      card.classList.toggle("collapsed");
-      card.classList.contains("collapsed") ? state.open.delete(h.id) : state.open.add(h.id);
-    };
-    return card;
-  }));
-}
+function renderAll() { renderPulse(); renderFeed(); renderDetail(); }
+function select(id) { S.sel = id; renderAll(); if (innerWidth < 900) $("#detail").scrollIntoView({ behavior: "smooth" }); }
 
-$("#feed").addEventListener("click", async (e) => {
-  const b = e.target.closest(".vote button"); if (!b) return;
-  const id = +b.parentElement.dataset.alert, vote = +b.dataset.v;
-  state.votes[id] = vote; render();
-  try { await api("/api/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ alert_id: id, vote }) }); }
-  catch (err) { console.warn(err); }
+// ---- events --------------------------------------------------------------------------------------
+$("#feed").addEventListener("click", (e) => { const li = e.target.closest("li[data-id]"); if (li) select(+li.dataset.id); });
+$("#detail").addEventListener("click", async (e) => {
+  const v = e.target.closest(".vote button");
+  if (v) { const id = +v.parentElement.dataset.alert, vote = +v.dataset.v; S.votes[id] = vote; renderDetail();
+    try { await api("/api/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ alert_id: id, vote }) }); } catch {}
+    return; }
+  const r = e.target.closest(".mk-row"); if (!r) return;
+  const li = r.parentElement, id = +li.dataset.j, isOpen = li.classList.toggle("open");
+  S.open.delete(id); S.open.delete(-id); S.open.add(isOpen ? id : -id);
 });
-
-$("#paste").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const btn = e.target.querySelector("button"), title = $("#title").value.trim();
-  if (!title) return;
-  btn.disabled = true; btn.textContent = "Judging…";
-  const t0 = performance.now();
-  try {
-    const item = await api("/api/headline", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) });
-    state.open.add(item.headline.id);
-    $("#title").value = "";
-    await loadFeed(); loadStats();
-    btn.textContent = `Done in ${((performance.now() - t0) / 1000).toFixed(1)}s`;
-  } catch (err) { alert(`Failed: ${err.message}`); btn.textContent = "Judge it"; }
-  finally { btn.disabled = false; setTimeout(() => (btn.textContent = "Judge it"), 2500); }
+$("#range").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return;
+  S.hours = +b.dataset.h; [...$("#range").children].forEach((x) => x.classList.toggle("on", x === b)); renderPulse(); });
+$("#filter").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return;
+  S.filter = b.dataset.f; [...$("#filter").children].forEach((x) => x.classList.toggle("on", x === b)); renderFeed(); });
+$("#minRel").addEventListener("input", (e) => { S.minRel = +e.target.value; $("#minRelV").value = S.minRel.toFixed(2); renderAll(); });
+$("#cmd").addEventListener("submit", async (e) => {
+  e.preventDefault(); const title = $("#cmdInput").value.trim(); if (!title) return;
+  const b = $("#cmdBtn"); b.disabled = true; b.textContent = "Judging…"; const t0 = performance.now();
+  try { const it = await api("/api/headline", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) });
+    $("#cmdInput").value = ""; S.sel = it.headline.id; await load(); loadStats();
+    b.textContent = `${((performance.now() - t0) / 1000).toFixed(2)}s`;
+  } catch (err) { b.textContent = "Failed"; console.error(err); }
+  finally { b.disabled = false; setTimeout(() => (b.textContent = "Judge"), 2200); }
 });
+addEventListener("keydown", (e) => { if (e.key === "/" && document.activeElement.tagName !== "INPUT") { e.preventDefault(); $("#cmdInput").focus(); } });
+addEventListener("resize", () => renderPulse());
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderAll);
 
-["#onlyJudged", "#onlyAlerts", "#minRel"].forEach((s) => $(s).addEventListener("input", render));
-
-let pending;
-function connect() {
-  const es = new EventSource("/api/stream");
-  es.onopen = () => $("#live").classList.add("on");
-  es.onerror = () => $("#live").classList.remove("on");
-  const refresh = () => { clearTimeout(pending); pending = setTimeout(() => { loadFeed(); loadStats(); }, 600); };
-  ["headline", "judgment", "alert"].forEach((ev) => es.addEventListener(ev, refresh));
-}
-
-loadFeed(); loadStats(); connect();
+let t;
+const es = new EventSource("/api/stream");
+es.onopen = () => $("#live").classList.add("on");
+es.onerror = () => $("#live").classList.remove("on");
+["headline", "judgment", "alert"].forEach((ev) => es.addEventListener(ev, () => { clearTimeout(t); t = setTimeout(() => { load(); loadStats(); }, 800); }));
+load(); loadStats();
 setInterval(loadStats, 15000);
-setInterval(render, 60000); // keep "x min ago" fresh
+setInterval(() => { load(); }, 60000);

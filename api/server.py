@@ -56,9 +56,10 @@ def _feed_item(conn: sqlite3.Connection, headline_id: int) -> dict | None:
         return None
     judgments = []
     rows = conn.execute(
-        "SELECT j.*, m.question AS market_question, m.url AS market_url,"
+        "SELECT j.*, m.question AS market_question, m.url AS market_url, m.rules AS market_rules,"
+        " m.end_date AS market_end_date, m.outcomes AS market_outcomes, m.is_game AS market_is_game,"
         " m.yes_price AS market_yes_price, a.id AS alert_id, a.kind AS alert_kind,"
-        " a.direction AS alert_direction FROM judgments j"
+        " a.direction AS alert_direction, a.price_at_alert AS alert_price, a.created_at AS alert_at FROM judgments j"
         " JOIN markets m ON m.id=j.market_id"
         " LEFT JOIN alerts a ON a.judgment_id=j.id"
         " WHERE j.headline_id=? ORDER BY j.relevant DESC, j.id",
@@ -74,8 +75,16 @@ def _feed_item(conn: sqlite3.Connection, headline_id: int) -> dict | None:
                     "question": row["market_question"],
                     "url": row["market_url"],
                     "yes_price": row["market_yes_price"],
+                    "rules": (row["market_rules"] or "")[:700],
+                    "end_date": row["market_end_date"],
+                    "outcomes": json.loads(row["market_outcomes"] or "null"),
+                    "is_game": bool(row["market_is_game"]),
                 },
                 "relevant": row["relevant"],
+                "same_period": row["same_period"],
+                "strength_conf": row["strength_conf"],
+                "yes_price_at": row["yes_price_at"],
+                "effect_probs": json.loads(row["effect_probs"] or "{}"),
                 "effect": row["effect"],
                 "effect_conf": row["effect_conf"],
                 "strength": row["strength"],
@@ -85,6 +94,11 @@ def _feed_item(conn: sqlite3.Connection, headline_id: int) -> dict | None:
                         "id": row["alert_id"],
                         "kind": row["alert_kind"],
                         "direction": row["alert_direction"],
+                        "price_at_alert": row["alert_price"],
+                        "created_at": row["alert_at"],
+                        "checks": [dict(c) for c in conn.execute(
+                            "SELECT offset_min, price, checked_at FROM price_checks WHERE alert_id=? ORDER BY offset_min",
+                            (row["alert_id"],))],
                     }
                     if row["alert_id"] is not None
                     else None
@@ -95,10 +109,11 @@ def _feed_item(conn: sqlite3.Connection, headline_id: int) -> dict | None:
 
 
 @app.get("/api/feed")
-def feed(limit: int = Query(default=50, ge=1, le=200)) -> list[dict]:
+def feed(limit: int = Query(default=50, ge=1, le=300), judged: bool = False) -> list[dict]:
     with closing(connect()) as conn:
+        where = "WHERE EXISTS (SELECT 1 FROM judgments j WHERE j.headline_id=headlines.id)" if judged else ""
         ids = conn.execute(
-            "SELECT id FROM headlines ORDER BY COALESCE(published_at, fetched_at) DESC, id DESC LIMIT ?",
+            f"SELECT id FROM headlines {where} ORDER BY fetched_at DESC, id DESC LIMIT ?",
             (limit,),
         )
         return [_feed_item(conn, row["id"]) for row in ids]
@@ -162,6 +177,10 @@ def stats() -> dict:
         ).fetchall()
         known_hits = [_hit(row) for row in checks]
         known_hits = [hit for hit in known_hits if hit is not None]
+        # a flat price is "no reaction", not a wrong call; report direction accuracy among markets that moved
+        moved = [(r["price"] - r["price_at_alert"]) * r["direction"] for r in checks
+                 if r["price"] is not None and r["price_at_alert"] is not None]
+        moved_nz = [d for d in moved if abs(d) > 1e-9]
         by_kind = {
             row["kind"]: row["count"]
             for row in conn.execute("SELECT kind, count(*) AS count FROM alerts GROUP BY kind")
@@ -173,6 +192,9 @@ def stats() -> dict:
             "cost_usd": cost_usd,
             "p50_latency_ms": p50,
             "hit_rate_10m": sum(known_hits) / len(known_hits) if known_hits else None,
+            "direction_right_10m": sum(d > 0 for d in moved_nz) / len(moved_nz) if moved_nz else None,
+            "moved_share_10m": len(moved_nz) / len(moved) if moved else None,
+            "checked_10m": len(moved),
             "by_kind": by_kind,
         }
 
