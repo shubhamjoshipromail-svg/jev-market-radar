@@ -30,10 +30,12 @@ pids+=("$!")
 pids+=("$!")
 "$PYTHON" -m radar.tracker &
 pids+=("$!")
-"$PYTHON" -m radar.notify &
-pids+=("$!")
-"$PYTHON" -m uvicorn api.server:app --host 127.0.0.1 --port "${PORT:-8000}" &
+if [[ -n "${NTFY_TOPIC:-}" ]] || grep -qs "^NTFY_TOPIC=." "$ROOT/../../.env"; then
+  "$PYTHON" -m radar.notify &
+  pids+=("$!")
+fi
+"$PYTHON" -m uvicorn api.server:app --host "${HOST:-127.0.0.1}" --port "${PORT:-8000}" &
 pids+=("$!")
 
-echo "Jev Market Radar running at http://127.0.0.1:${PORT:-8000}"
+echo "Jev Market Radar running at http://${HOST:-127.0.0.1}:${PORT:-8000}"
 wait

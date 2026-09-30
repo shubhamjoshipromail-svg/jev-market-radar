@@ -28,6 +28,32 @@ WEB = ROOT / "web"
 
 app = FastAPI(title="Jev Market Radar", version="0.1.0")
 
+# Public deploys: anyone can hit POST /api/headline, and every call spends Jev credit. Cap it per IP and per day.
+import os
+from collections import defaultdict, deque
+
+PUBLIC_MODE = os.getenv("PUBLIC_MODE") == "1"
+PASTE_PER_IP_10MIN = int(os.getenv("PASTE_PER_IP_10MIN", "6"))
+PASTE_PER_DAY = int(os.getenv("PASTE_PER_DAY", "300"))
+_hits: dict[str, deque] = defaultdict(deque)
+_day: deque = deque()
+
+
+def _rate_limit(request: Request) -> None:
+    if not PUBLIC_MODE:
+        return
+    t = time.time()
+    ip = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "?")).split(",")[0].strip()
+    q = _hits[ip]
+    while q and q[0] < t - 600:
+        q.popleft()
+    while _day and _day[0] < t - 86400:
+        _day.popleft()
+    if len(q) >= PASTE_PER_IP_10MIN or len(_day) >= PASTE_PER_DAY:
+        raise HTTPException(status_code=429, detail="Paste limit reached on this public demo. Try again in a few minutes.")
+    q.append(t)
+    _day.append(t)
+
 
 @app.on_event("startup")
 def _warm_index() -> None:
@@ -279,7 +305,8 @@ def _add_and_process(payload: HeadlineIn) -> dict:
 
 
 @app.post("/api/headline")
-async def headline(payload: HeadlineIn) -> dict:
+async def headline(payload: HeadlineIn, request: Request) -> dict:
+    _rate_limit(request)
     return await run_in_threadpool(_add_and_process, payload)
 
 

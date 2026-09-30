@@ -1,6 +1,7 @@
 """RSS poller. python -m radar.news.rss [--loop 60] [--backfill]
 First run only marks existing items as seen (status='seed') so we don't judge hours-old news; use --backfill to judge them."""
 import argparse
+import os
 import html
 import re
 import time
@@ -70,6 +71,13 @@ if __name__ == "__main__":
         while True:
             n = poll_once(conn, http, seed=first and not a.backfill)
             print(f"[rss] {n} new{' (seeded, not judged)' if first and not a.backfill else ''}", flush=True)
+            if first and not a.backfill:
+                # fresh deploy: judge the newest few so the board isn't empty on day one
+                k = int(os.getenv("RADAR_BACKFILL_ON_START", "0"))
+                if k:
+                    conn.execute("UPDATE headlines SET status='new' WHERE id IN (SELECT id FROM headlines"
+                                 " WHERE status='seed' ORDER BY COALESCE(published_at, fetched_at) DESC LIMIT ?)", (k,))
+                    conn.commit()
             first = False
             if not a.loop:
                 break
