@@ -105,7 +105,8 @@ def _feed_item(conn: sqlite3.Connection, headline_id: int) -> dict | None:
                 ),
             }
         )
-    return {"headline": dict(headline), "judgments": judgments}
+    also = [r["source"] for r in conn.execute("SELECT source FROM headlines WHERE dup_of=?", (headline_id,))]
+    return {"headline": {**dict(headline), "also_reported_by": also}, "judgments": judgments}
 
 
 @app.get("/api/feed")
@@ -199,6 +200,59 @@ def stats() -> dict:
         }
 
 
+CATEGORIES = ["sports", "crypto", "politics", "elections", "economy", "finance", "business", "tech", "ai",
+              "geopolitics", "world", "culture", "science", "weather"]
+
+
+def _category(tags_json: str | None) -> str:
+    tags = set(json.loads(tags_json or "[]"))
+    return next((c for c in CATEGORIES if c in tags), "other")
+
+
+@app.get("/api/scorecard")
+def scorecard() -> dict:
+    """Which sources, alert kinds, categories, volume buckets and prompt versions predict real price moves (10 min)."""
+    with closing(connect()) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT h.source, a.kind, a.direction, a.price_at_alert, p.price, m.tags, m.volume_24h, j.model,"
+            " (SELECT vote FROM feedback f WHERE f.alert_id=a.id ORDER BY f.id DESC LIMIT 1) AS vote"
+            " FROM alerts a JOIN headlines h ON h.id=a.headline_id JOIN markets m ON m.id=a.market_id"
+            " JOIN judgments j ON j.id=a.judgment_id"
+            " LEFT JOIN price_checks p ON p.alert_id=a.id AND p.offset_min=10")]
+        heads = {r["source"]: r["n"] for r in conn.execute(
+            "SELECT source, count(*) n FROM headlines WHERE status IN ('done','duplicate') GROUP BY source")}
+        dups = conn.execute("SELECT count(*) FROM headlines WHERE status='duplicate'").fetchone()[0]
+
+    def vol_bucket(v):
+        return "unknown" if v is None else "<$1k" if v < 1e3 else "$1k–10k" if v < 1e4 else "$10k–100k" if v < 1e5 else "$100k+"
+
+    def group(key):
+        out = {}
+        for r in rows:
+            g = out.setdefault(key(r), {"alerts": 0, "checked": 0, "moved": 0, "right": 0, "useful": 0, "wrong": 0})
+            g["alerts"] += 1
+            g["useful"] += r["vote"] == 1
+            g["wrong"] += r["vote"] == -1
+            if r["price"] is not None and r["price_at_alert"] is not None:
+                d = (r["price"] - r["price_at_alert"]) * r["direction"]
+                g["checked"] += 1
+                g["moved"] += abs(d) > 1e-9
+                g["right"] += d > 1e-9
+        return sorted(({"key": k, **v} for k, v in out.items()), key=lambda x: -x["alerts"])
+
+    by_source = group(lambda r: r["source"])
+    for g in by_source:
+        g["headlines"] = heads.get(g["key"], 0)
+    return {
+        "total_alerts": len(rows), "duplicates_skipped": dups,
+        "by_source": by_source,
+        "by_kind": group(lambda r: r["kind"]),
+        "by_category": group(lambda r: _category(r["tags"])),
+        "by_volume_24h": group(lambda r: vol_bucket(r["volume_24h"])),
+        "by_prompt": group(lambda r: (r["model"] or "").split("+")[-1] if "+" in (r["model"] or "") else "v1"),
+    }
+
+
 @app.get("/api/markets")
 def markets(q: str = Query(default="", max_length=500)) -> list[dict]:
     with closing(connect()) as conn:
@@ -247,9 +301,12 @@ def worker_loop(poll_seconds: float = 1.0) -> None:
     conn = connect()
     try:
         while True:
+            # atomic claim, so several workers can drain the queue in parallel without double-judging
             row = conn.execute(
-                "SELECT id FROM headlines WHERE status='new' ORDER BY id LIMIT 1"
+                "UPDATE headlines SET status='processing' WHERE id=(SELECT id FROM headlines WHERE status='new'"
+                " ORDER BY id DESC LIMIT 1) RETURNING id"
             ).fetchone()
+            conn.commit()
             if row is None:
                 time.sleep(poll_seconds)
                 continue

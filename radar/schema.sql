@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS markets (
   yes_price     REAL,                      -- 0..1
   volume        REAL,
   liquidity     REAL,
+  volume_24h    REAL,                      -- traded in the last 24h; proxy for 'will the price react at all'
   outcomes      TEXT,                      -- JSON list; yes_price is the price of outcomes[0]
   tags          TEXT,                      -- JSON list of event tag slugs
   is_game       INTEGER NOT NULL DEFAULT 0, -- single-game sports market (moneyline/spread/total)
@@ -27,7 +28,8 @@ CREATE TABLE IF NOT EXISTS headlines (
   published_at  TEXT,
   fetched_at    TEXT NOT NULL,
   dedupe_key    TEXT UNIQUE,               -- normalized title hash; dupes are skipped
-  status        TEXT NOT NULL DEFAULT 'new' -- new | processing | done | error
+  status        TEXT NOT NULL DEFAULT 'new', -- new | processing | done | error | duplicate | seed
+  dup_of        INTEGER                    -- earlier headline reporting the same event
 );
 
 CREATE TABLE IF NOT EXISTS judgments (

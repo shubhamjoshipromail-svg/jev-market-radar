@@ -148,7 +148,7 @@ function renderDetail() {
   const lat = it.judgments.map((j) => j.latency_ms).sort((a, b) => a - b);
   S.firstAlert = shown.find((j) => j.alert)?.id; // only the top alert opens by default
   box.innerHTML = `<div class="d-head">
-      <div class="meta"><span>${esc(src(h))}</span><span>${hhmm(h.fetched_at)} · ${ago(h.fetched_at)} ago</span>
+      <div class="meta"><span>${esc(src(h))}${h.also_reported_by?.length ? ` · also ${h.also_reported_by.map(src).map(esc).join(", ")}` : ""}</span><span>${hhmm(h.fetched_at)} · ${ago(h.fetched_at)} ago</span>
       ${h.url ? `<a href="${esc(h.url)}" target="_blank" rel="noopener">source ↗</a>` : ""}</div>
       <h1>${esc(h.title)}</h1>
       <div class="d-kpis"><span><b>${it.judgments.length}</b>markets judged</span><span><b>${d.rel.length}</b>relevant</span>

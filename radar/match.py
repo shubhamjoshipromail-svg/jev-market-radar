@@ -78,9 +78,46 @@ def candidates(conn, headline: dict, k: int = PREFILTER_K) -> list[dict]:
     # the index is cached, so re-read live fields (price, active) for just these candidates
     if out:
         fresh = {r["id"]: r for r in conn.execute(
-            f"SELECT id, yes_price, active FROM markets WHERE id IN ({','.join('?' * len(out))})", [m["id"] for m in out])}
-        out = [{**m, "yes_price": fresh[m["id"]]["yes_price"]} for m in out if fresh.get(m["id"], {"active": 0})["active"]]
+            f"SELECT id, yes_price, active, volume_24h FROM markets WHERE id IN ({','.join('?' * len(out))})", [m["id"] for m in out])}
+        out = [{**m, "yes_price": fresh[m["id"]]["yes_price"], "volume_24h": fresh[m["id"]]["volume_24h"]} for m in out if fresh.get(m["id"], {"active": 0})["active"]]
     return out
+
+
+DUP_WINDOW_H = 12
+DUP_MIN_OVERLAP = 0.3   # cheap word-overlap prefilter before asking Jev
+DUP_MIN_P = 0.8
+
+
+def _title_tokens(title: str) -> set[str]:
+    return set(_tok(re.sub(r"\s+[-|–]\s+[^-|–]+$", "", title)))  # drop Google News " - Outlet" suffix
+
+
+def find_duplicate(conn, h: dict) -> int | None:
+    """Earlier headline (last 12h) reporting the same event, decided by Jev over word-overlap candidates."""
+    mine = _title_tokens(h["title"])
+    if not mine:
+        return None
+    rows = conn.execute(
+        "SELECT id, title FROM headlines WHERE id<>? AND status='done' AND dup_of IS NULL"
+        " AND fetched_at > datetime('now', ?)", (h["id"], f"-{DUP_WINDOW_H} hours")).fetchall()
+    scored = sorted(((len(mine & t) / len(mine | t), r) for r in rows if (t := _title_tokens(r["title"]))),
+                    key=lambda x: -x[0])
+    cands = [r for s, r in scored[:5] if s >= DUP_MIN_OVERLAP]
+    if not cands:
+        return None
+    questions = {f"E{i}": {
+        "type": "noul",
+        "instructions": f"Do `new` and `earlier.E{i}` report the same specific news event (same happening, "
+                        "possibly worded differently or from another outlet)? Different events on the same topic are false.",
+        "criteria": {"true": "Same event.", "false": "Different events, even if related."}} for i in range(len(cands))}
+    state = {"new": h["title"], "earlier": {f"E{i}": r["title"] for i, r in enumerate(cands)}}
+
+    async def ask():
+        async with jev.client() as http:
+            return await jev.ask(http, state, questions)
+    res = asyncio.run(ask())
+    best = max(range(len(cands)), key=lambda i: res["answers"][f"E{i}"]["noul"])
+    return cands[best]["id"] if res["answers"][f"E{best}"]["noul"] >= DUP_MIN_P else None
 
 
 async def _judge_all(headline: dict, markets: list[dict]) -> list[tuple[dict, dict | Exception]]:
@@ -104,6 +141,11 @@ def process_headline(conn, headline_id: int, k: int = PREFILTER_K) -> list[int]:
     conn.commit()
     ids = []
     try:
+        if h["source"] != "paste":  # a pasted headline is always judged
+            dup = find_duplicate(conn, h)
+            if dup:
+                conn.execute("UPDATE headlines SET status='duplicate', dup_of=? WHERE id=?", (dup, headline_id))
+                return []
         markets = candidates(conn, h, k)
         results = asyncio.run(_judge_all(h, markets)) if markets else []
         for rank, (m, j) in enumerate(results):
@@ -120,7 +162,7 @@ def process_headline(conn, headline_id: int, k: int = PREFILTER_K) -> list[int]:
             )
             ids.append(cur.lastrowid)
             alerts.maybe_alert(conn, cur.lastrowid, headline_id, m["id"], j, m["yes_price"], m["question"],
-                               m.get("is_game") or 0)
+                               m.get("is_game") or 0, m.get("volume_24h"))
         conn.execute("UPDATE headlines SET status='done' WHERE id=?", (headline_id,))
     except Exception:
         conn.execute("UPDATE headlines SET status='error' WHERE id=?", (headline_id,))

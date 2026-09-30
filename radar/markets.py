@@ -68,13 +68,13 @@ def sync(conn) -> int:
     for m in rows:
         conn.execute(
             "INSERT INTO markets (id,venue,slug,url,question,rules,end_date,yes_price,volume,liquidity,outcomes,tags,is_game,"
-            "active,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET question=excluded.question,"
-            " outcomes=excluded.outcomes, tags=excluded.tags, is_game=excluded.is_game,"
+            "volume_24h,active,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET question=excluded.question,"
+            " outcomes=excluded.outcomes, tags=excluded.tags, is_game=excluded.is_game, volume_24h=excluded.volume_24h,"
             " rules=excluded.rules, end_date=excluded.end_date, yes_price=excluded.yes_price, volume=excluded.volume,"
             " liquidity=excluded.liquidity, url=excluded.url, active=1, updated_at=excluded.updated_at",
             (f"polymarket:{m['id']}", "polymarket", m.get("slug"), m["_url"], m["question"], m.get("description"),
              m.get("endDate"), _yes_price(m), float(m.get("volume") or 0), float(m.get("liquidity") or 0),
-             m.get("outcomes"), json.dumps(m.get("_tags") or []), _is_game(m), ts),
+             m.get("outcomes"), json.dumps(m.get("_tags") or []), _is_game(m), float(m.get("volume24hr") or 0), ts),
         )
     conn.execute("UPDATE markets SET active=0 WHERE venue='polymarket' AND updated_at<?", (ts,))
     conn.commit()

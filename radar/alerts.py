@@ -5,6 +5,8 @@ import os
 
 from radar.db import now
 
+# Markets nobody trades don't react to news, so an alert there can't be acted on or scored. Tune on the scorecard.
+MIN_VOLUME_24H = float(os.getenv("RADAR_MIN_VOLUME_24H", "1000"))
 ALERT_GAMES = os.getenv("RADAR_ALERT_GAMES", "0") == "1"  # single-game markets: judged and shown, not alerted
 
 MIN_RELEVANT = 0.70
@@ -46,8 +48,10 @@ def decide(j: dict, yes_price: float | None, question: str = "") -> tuple[str, i
 
 
 def maybe_alert(conn, judgment_id: int, headline_id: int, market_id: str, j: dict, yes_price,
-                question: str = "", is_game: int = 0) -> int | None:
+                question: str = "", is_game: int = 0, volume_24h: float | None = None) -> int | None:
     if is_game and not ALERT_GAMES:
+        return None
+    if volume_24h is not None and volume_24h < MIN_VOLUME_24H:
         return None
     d = decide(j, yes_price, question)
     if not d:

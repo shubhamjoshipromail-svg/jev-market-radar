@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radar scorecard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  .sc { max-width: 1100px; margin: 18px auto 48px; padding: 0 24px; display: grid; gap: 18px; }
+  .intro { color: var(--ink-2); font-size: 13px; max-width: 72ch; margin: 0; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .card h2 { font-size: 13px; font-weight: 600; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .card h2 small { font-weight: 400; color: var(--ink-3); margin-left: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 16px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-size: 11px; font-weight: 500; color: var(--ink-3); }
+  th:first-child, td:first-child { text-align: left; white-space: normal; }
+  td { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  td:first-child { font-family: var(--sans); }
+  tr:last-child td { border-bottom: 0; }
+  .rate { display: inline-grid; grid-template-columns: 64px 3.5ch; gap: 8px; align-items: center; }
+  .rate .bar { height: 4px; background: var(--mid); border-radius: 2px; overflow: hidden; }
+  .rate .bar i { display: block; height: 100%; border-radius: 2px; background: var(--ink-2); }
+  .thin { color: var(--ink-3); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 800px) { .two { grid-template-columns: 1fr; } th, td { padding: 8px 10px; } }
+  .top a { color: var(--ink-2); font-size: 13px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><strong>Radar</strong><span class="sub">scorecard</span></div>
+  <a href="/">← live board</a>
+</header>
+<main class="sc">
+  <p class="intro" id="intro">Every alert's price is re-checked 10 minutes later. <b>Moved</b> = the price changed at all.
+    <b>Right direction</b> = of those that moved, the share that moved the way Jev said. Rows with fewer than 5 checked
+    alerts are greyed out: too few to trust.</p>
+  <div id="cards"></div>
+</main>
+<script>
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const rate = (a, b) => b ? `<span class="rate"><span class="bar"><i style="width:${(a / b) * 100}%"></i></span><span>${Math.round((a / b) * 100)}%</span></span>` : "–";
+const table = (title, note, rows, extra = []) => `<section class="card"><h2>${title}<small>${note}</small></h2><table>
+  <thead><tr><th></th>${extra.map((e) => `<th>${e[0]}</th>`).join("")}<th>Alerts</th><th>Checked</th><th>Moved</th><th>Right direction</th><th>Votes 👍/👎</th></tr></thead>
+  <tbody>${rows.map((r) => `<tr class="${r.checked < 5 ? "thin" : ""}"><td>${esc(r.key.replace(/^(rss|bluesky):/, "$1 · "))}</td>
+    ${extra.map((e) => `<td>${r[e[1]] ?? "–"}</td>`).join("")}<td>${r.alerts}</td><td>${r.checked}</td>
+    <td>${rate(r.moved, r.checked)}</td><td>${rate(r.right, r.moved)}</td><td>${r.useful}/${r.wrong}</td></tr>`).join("")
+    || `<tr><td colspan="7">No alerts yet</td></tr>`}</tbody></table></section>`;
+fetch("/api/scorecard").then((r) => r.json()).then((s) => {
+  document.getElementById("cards").innerHTML =
+    table("By alert type", "stale price = news settles the market", s.by_kind) +
+    `<div class="two">${table("By market category", "from Polymarket tags", s.by_category)}${table("By 24h trading volume", "does activity predict reaction?", s.by_volume_24h)}</div>` +
+    table("By news source", `${s.duplicates_skipped} duplicate headlines skipped`, s.by_source, [["Headlines", "headlines"]]) +
+    table("By prompt version", "bump PROMPT_VERSION in radar/judge.py on every question change", s.by_prompt);
+});
+</script>
+</body>
+</html>
