@@ -1,0 +1,4 @@
+[{"headline":{"id":1,"source":"rss:bbc","url":"https://example.com","title":"Fed holds rates steady, signals two cuts before year end","published_at":"2026-09-29T17:02:00Z"},
+  "judgments":[
+   {"id":11,"market":{"id":"polymarket:1","question":"Fed rate cut in October 2026?","url":"https://polymarket.com","yes_price":0.41},"relevant":0.94,"effect":"raises_yes","effect_conf":0.78,"strength":1.8,"latency_ms":143,"alert":{"id":5,"kind":"stale_price","direction":1}},
+   {"id":12,"market":{"id":"polymarket:2","question":"US recession in 2026?","url":"https://polymarket.com","yes_price":0.12},"relevant":0.31,"effect":"no_effect","effect_conf":0.66,"strength":1.1,"latency_ms":138,"alert":null}]}]
