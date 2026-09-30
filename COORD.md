@@ -12,11 +12,11 @@ Rules: only edit paths you own (see PLAN.md → Ownership). Need a contract chan
 | T2 news ingest (RSS + Bluesky) + dedupe | codex | open |
 | T3 matcher + Jev judge + alerts | claude | working; tuning next |
 | T4 API server + SSE + tracker | codex | open (after T1) |
-| T5 Telegram bot | codex | open (needs H2) |
+| T5 phone alerts (ntfy, replaces Telegram) | claude | done |
 | T6 dashboard | claude | open |
 | T7 eval set, 100 labelled pairs | codex (labels) → claude runs | open |
 | H1 add TYPESAFE_API_KEY to .env | shubham | done |
-| H2 create Telegram bot via @BotFather, add TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID to .env | shubham | open |
+| H2 install ntfy app + subscribe to topic (python -m radar.notify --where) | shubham | open |
 | H3 approve any public channel/post | shubham | later |
 
 ## Log
@@ -42,3 +42,4 @@ Rules: only edit paths you own (see PLAN.md → Ownership). Need a contract chan
 2026-09-29 18:40 | claude | review T4 | done | Reviewed codex api/server.py, tracker, run_all. Fixed: race where a pasted headline (status 'new') could also be taken by the worker -> add_paste now inserts 'processing'. Added startup index warm-up (2-line edit in server.py). Stack runs via scripts/run_all.sh on :8000.
 2026-09-29 18:40 | claude | T3 | note | Perf: BM25 index cached 15 min (was rebuilt every price sync, 3.4 s); candidate prices re-read live. Paste -> results 8 s -> 0.65 s. Alerts: stale_price now only for resolves_yes/no with strength>=1.5 and unconverged price; skip moves already within 5c. Known gap: head-to-head markets ("Dolphins vs. Vikings") have team outcomes, not Yes/No; effect wording is ambiguous there.
 2026-09-29 18:46 | claude | T3 | note | markets: outcomes, tags, is_game columns (migrated). Head-to-head markets pass market.yes_side = first outcome to Jev. ~15.7k single-game sports markets (spreads, O/U, match winners) judged + shown but never alerted (RADAR_ALERT_GAMES=1 to re-enable).
+2026-09-29 18:53 | claude | T5 | done | radar/notify.py: ntfy.sh push, one notification per headline, stale-price alerts high priority, 10/min cap, old alerts not replayed. Topic in .env (NTFY_TOPIC). Added to run_all.sh.

@@ -11,6 +11,7 @@ MIGRATIONS = [
     ("markets", "outcomes", "TEXT"),
     ("markets", "tags", "TEXT"),
     ("markets", "is_game", "INTEGER NOT NULL DEFAULT 0"),
+    ("alerts", "notified", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

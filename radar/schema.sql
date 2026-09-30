@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS alerts (
   direction     INTEGER NOT NULL,          -- +1 yes-ward, -1 no-ward
   price_at_alert REAL,
   created_at    TEXT NOT NULL,
-  sent_telegram INTEGER NOT NULL DEFAULT 0
+  sent_telegram INTEGER NOT NULL DEFAULT 0,
+  notified      INTEGER NOT NULL DEFAULT 0   -- pushed to phone (ntfy)
 );
 
 CREATE TABLE IF NOT EXISTS price_checks (
