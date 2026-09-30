@@ -3,7 +3,8 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = ROOT.parents[1]
+# the IDEAS repo root when run locally; absent on a deploy (e.g. Railway's /app), where env vars are used instead
+REPO = ROOT.parents[1] if len(ROOT.parents) > 1 else ROOT
 
 def _load_env() -> None:
     for p in (ROOT / ".env", REPO / ".env"):
