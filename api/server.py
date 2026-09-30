@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from radar.db import connect, now
 from radar.match import add_paste, process_headline
+from radar.rank import leaderboard, opportunity
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
@@ -85,7 +86,7 @@ def _feed_item(conn: sqlite3.Connection, headline_id: int) -> dict | None:
     rows = conn.execute(
         "SELECT j.*, m.question AS market_question, m.url AS market_url, m.rules AS market_rules,"
         " m.end_date AS market_end_date, m.outcomes AS market_outcomes, m.is_game AS market_is_game,"
-        " m.yes_price AS market_yes_price, a.id AS alert_id, a.kind AS alert_kind,"
+        " m.yes_price AS market_yes_price, m.volume_24h AS market_volume_24h, a.id AS alert_id, a.kind AS alert_kind,"
         " a.direction AS alert_direction, a.price_at_alert AS alert_price, a.created_at AS alert_at, a.why AS alert_why FROM judgments j"
         " JOIN markets m ON m.id=j.market_id"
         " LEFT JOIN alerts a ON a.judgment_id=j.id"
@@ -106,7 +107,12 @@ def _feed_item(conn: sqlite3.Connection, headline_id: int) -> dict | None:
                     "end_date": row["market_end_date"],
                     "outcomes": json.loads(row["market_outcomes"] or "null"),
                     "is_game": bool(row["market_is_game"]),
+                    "volume_24h": row["market_volume_24h"],
                 },
+                "magnitude": row["magnitude"],
+                "opportunity": opportunity(row, row["market_yes_price"],
+                                           row["alert_price"] if row["alert_price"] is not None else row["yes_price_at"],
+                                           row["market_volume_24h"], bool(row["market_is_game"])),
                 "relevant": row["relevant"],
                 "same_period": row["same_period"],
                 "strength_conf": row["strength_conf"],
@@ -279,6 +285,13 @@ def scorecard() -> dict:
         "by_volume_24h": group(lambda r: vol_bucket(r["volume_24h"])),
         "by_prompt": group(lambda r: (r["model"] or "").split("+")[-1] if "+" in (r["model"] or "") else "v1"),
     }
+
+
+@app.get("/api/top")
+def top(hours: int = Query(default=24, ge=1, le=168), limit: int = Query(default=12, ge=1, le=50)) -> list[dict]:
+    """Markets ranked by the weighted YES/NO lean of every recent headline about them."""
+    with closing(connect()) as conn:
+        return leaderboard(conn, hours, limit)
 
 
 @app.get("/api/markets")

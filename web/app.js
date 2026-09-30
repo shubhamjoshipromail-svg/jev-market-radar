@@ -38,11 +38,27 @@ function verdict(j) {
   if (age > 30) return "quiet"; // "early" only means something while the news is fresh
   return j.alert.kind === "stale_price" ? "settled" : "early";
 }
+const usd = (v) => (v == null ? "–" : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${Math.round(v / 1e3)}k` : `$${Math.round(v)}`);
+const plainSize = (m) => (m == null ? null : m >= 1.4 ? "Decisive" : m >= 0.7 ? "Clear" : "Small");
+function sides(outcomes) { const o = outcomes && outcomes.length === 2 ? outcomes : ["Yes", "No"];
+  return o.map((x) => (String(x).toLowerCase() === "yes" ? "YES" : String(x).toLowerCase() === "no" ? "NO" : x)); }
 function yesName(j) { const o = j.market.outcomes; return o && o[0] && o[0] !== "Yes" ? o[0] : "YES"; }
 function trackLine(kind) {
   const t = S.track?.[kind];
   if (!t || t.moved < 5) return "Track record: still collecting (fewer than 5 similar alerts with a price move).";
   return `Track record: similar alerts moved the predicted way ${t.right} of ${t.moved} times.`;
+}
+async function loadTop() {
+  try { S.top = await api("/api/top?hours=24&limit=5"); } catch { S.top = []; }
+  const box = $("#topStrip"); if (!box) return;
+  if (!S.top.length) { box.innerHTML = `<p class="s">Not enough news yet to rank markets.</p>`; return; }
+  box.innerHTML = S.top.map((t, i) => { const [yesS, noS] = sides(JSON.parse(t.market.outcomes || "null"));
+    const fav = t.favours === "YES" ? yesS : noS, p = t.market.yes_price, favP = p == null ? null : t.favours === "YES" ? p : 1 - p;
+    return `<a class="topc" href="${esc(t.market.url)}" target="_blank" rel="noopener" title="${esc(t.headlines.map((h) => "• " + h.title).join("\n"))}">
+      <span class="topn">${i + 1}</span>
+      <span class="topq">${esc(t.market.question)}</span>
+      <span class="topf ${t.favours === "YES" ? "up" : "down"}">News favours ${esc(fav)} ${t.favours === "YES" ? "▲" : "▼"}</span>
+      <span class="topm">${t.agree} of ${t.n} headline${t.n > 1 ? "s" : ""} agree · ${esc(fav)} ${cents(favP)} · ${usd(t.market.volume_24h)} today</span></a>`; }).join("");
 }
 async function loadTrack() {
   try { const s = await api("/api/scorecard"); S.track = Object.fromEntries(s.by_kind.map((k) => [k.key, k])); } catch {}
@@ -178,8 +194,10 @@ function renderDetail() {
   if (!it) { box.innerHTML = `<p class="none">Select a headline, or paste one above.</p>`; return; }
   const h = it.headline, d = summarize(it);
   const js = [...it.judgments].sort((a, b) => (VERDICT[verdict(a)]?.p ?? 9) - (VERDICT[verdict(b)]?.p ?? 9) || b.relevant - a.relevant);
-  const alerts = js.filter((j) => j.alert), rest = js.filter((j) => !j.alert && j.relevant >= S.minRel);
-  const shown = rest;
+  const alerts = js.filter((j) => j.alert);
+  const ranked = it.judgments.filter((j) => j.opportunity && j.relevant >= 0.7).sort((x, y) => y.opportunity.score - x.opportunity.score);
+  const top = ranked.slice(0, 3), topIds = new Set(top.map((j) => j.id));
+  const shown = js.filter((j) => !topIds.has(j.id) && j.relevant >= S.minRel);
   const look = alerts.filter((j) => ["settled", "early"].includes(verdict(j))).length;
   const summary = h.source === "paste" && alerts.length
     ? `If this were true, it would move <b>${alerts.length}</b> traded bet${alerts.length > 1 ? "s" : ""}. Nothing is pushed to phones for pasted headlines.`
@@ -197,8 +215,9 @@ function renderDetail() {
       <div class="d-kpis"><span><b>${it.judgments.length}</b>markets judged</span><span><b>${d.rel.length}</b>relevant</span>
       <span><b>${d.up}</b>toward YES</span><span><b>${d.down}</b>toward NO</span><span><b>${d.alerts}</b>alerts</span>
       <span><b>${lat.length ? lat[lat.length >> 1] : "–"}ms</b>median call</span></div></div>
-    ${alerts.length ? `<ol class="mk cards">${alerts.map(card).join("")}</ol>` : ""}
-    ${shown.length ? `<h2 class="sub-h">Also related (FYI)</h2><ol class="mk">${shown.map((j) => row(j)).join("")}</ol>`
+    ${top.length ? `<h2 class="sub-h first">Top ${top.length} market${top.length > 1 ? "s" : ""} for this headline <span>ranked by opportunity</span></h2>
+      <ol class="mk cards">${top.map((j, i) => card(j, i + 1, ranked.length)).join("")}</ol>` : ""}
+    ${shown.length ? `<h2 class="sub-h">Other related markets</h2><ol class="mk">${shown.map((j) => row(j)).join("")}</ol>`
       : alerts.length ? "" : `<p class="none">None of the ${it.judgments.length} candidate markets cleared relevance ${S.minRel.toFixed(2)}.</p>`}`;
 }
 function row(j) {
@@ -228,32 +247,38 @@ function row(j) {
     </div></li>`;
 }
 
-function card(j) {
-  const v = verdict(j), V = VERDICT[v], a = j.alert, yes = yesName(j);
-  const at = a.price_at_alert ?? j.yes_price_at, now = j.market.yes_price;
-  const dir = DIR[j.effect] || 0, open = S.open.has(j.id);
-  const eff = EFFECT_SENTENCE[j.effect].replace("YES", yes);
+function card(j, rank, total) {
+  const v = verdict(j) || "fyi", V = VERDICT[v], a = j.alert, op = j.opportunity;
+  const [yesS, noS] = sides(j.market.outcomes), fav = op.favours === "YES" ? yesS : noS, other = op.favours === "YES" ? noS : yesS;
+  const pNow = j.market.yes_price, pAt = a?.price_at_alert ?? j.yes_price_at;
+  const favNow = pNow == null ? null : op.favours === "YES" ? pNow : 1 - pNow, favAt = pAt == null ? null : op.favours === "YES" ? pAt : 1 - pAt;
+  const open = S.open.has(j.id), size = plainSize(j.magnitude);
   return `<li data-j="${j.id}" class="card-li ${open ? "open" : ""}"><article class="acard v-${v}">
-    <header><span class="vlabel v-${v}">${V.t}</span><span class="vdesc">${V.d}</span></header>
+    <header><span class="rank">#${rank} of ${total}</span><span class="opp o-${op.level.toLowerCase()}" title="Opportunity score ${op.score}/100: size of the news, room to move, how solid, how traded, relevance, freshness">Opportunity ${op.level} · ${op.score}</span>
+      <span class="vlabel v-${v}">${V.t}</span></header>
     <h3><a href="${esc(j.market.url)}" target="_blank" rel="noopener">${esc(j.market.question)}</a></h3>
+    <p class="favours ${op.favours === "YES" ? "up" : "down"}"><b>News favours ${esc(fav)}</b> <span>${op.favours === "YES" ? "▲" : "▼"}</span>
+      <span class="fx-sub">If the news is right, ${esc(fav)} shares gain and ${esc(other)} shares lose.</span></p>
     <dl class="facts">
-      <div><dt>Effect</dt><dd class="${dir > 0 ? "up" : "down"}">${dir > 0 ? "▲" : "▼"} ${esc(eff)}</dd></div>
-      <div><dt>Price of ${esc(yes)}</dt><dd class="mono">${cents(at)} at the headline → ${cents(now)} now</dd></div>
+      <div><dt>${esc(fav)} price</dt><dd class="mono">${cents(favAt)} → ${cents(favNow)} now</dd></div>
+      <div><dt>Size of change</dt><dd>${size || "–"}</dd></div>
       <div><dt>How solid</dt><dd>${plainStrength(j.strength)}</dd></div>
+      <div><dt>Traded today</dt><dd class="mono">${usd(j.market.volume_24h)}</dd></div>
     </dl>
-    ${a.why ? `<p class="whyline">${esc(a.why)}</p>` : ""}
-    <p class="track">${trackLine(a.kind)}</p>
+    ${a?.why ? `<p class="whyline">${esc(a.why)}</p>` : ""}
+    ${a ? `<p class="track">${V.d} ${trackLine(a.kind)}</p>` : `<p class="track">${V.d}</p>`}
     <div class="acts">
-      <a class="btn primary" href="${esc(j.market.url)}" target="_blank" rel="noopener">Open on Polymarket ↗</a>
-      <button class="btn share" type="button" data-share="${a.id}">Copy share link</button>
-      <span class="vote" data-alert="${a.id}"><button data-v="1" class="${S.votes[a.id] === 1 ? "on" : ""}">Useful</button><button data-v="-1" class="${S.votes[a.id] === -1 ? "on" : ""}">Wrong</button></span>
+      <a class="btn primary" href="${esc(j.market.url)}" target="_blank" rel="noopener">Open market ↗</a>
+      ${a ? `<button class="btn share" type="button" data-share="${a.id}">Copy share link</button>
+      <span class="vote" data-alert="${a.id}"><button data-v="1" class="${S.votes[a.id] === 1 ? "on" : ""}">Useful</button><button data-v="-1" class="${S.votes[a.id] === -1 ? "on" : ""}">Wrong</button></span>` : ""}
       <button class="btn ghost more" type="button">${open ? "Hide details" : "Details"}</button>
     </div>
   </article>
   <div class="mk-more">
     <div><div class="side"><h3>Resolution rules</h3></div><div class="rules">${esc(j.market.rules)}</div></div>
-    <div class="side"><h3>How Jev split its answer</h3>${dist(j.effect_probs)}<h3>Price since alert</h3>${reaction(a)}
-      <p class="s">relevance ${j.relevant.toFixed(2)} · confidence ${(j.effect_conf ?? 0).toFixed(2)} · strength ${(j.strength ?? 0).toFixed(1)}/2 · ${j.latency_ms}ms</p></div>
+    <div class="side"><h3>How Jev split its answer</h3>${dist(j.effect_probs)}${a ? `<h3>Price since alert</h3>${reaction(a)}` : ""}
+      <p class="s">score parts: ${Object.entries(op.parts).map(([k, x]) => `${k} ${x}`).join(" · ")}</p>
+      <p class="s">relevance ${j.relevant.toFixed(2)} · confidence ${(j.effect_conf ?? 0).toFixed(2)} · strength ${(j.strength ?? 0).toFixed(1)}/2 · size ${j.magnitude?.toFixed(1) ?? "–"}/2 · ${j.latency_ms}ms</p></div>
   </div></li>`;
 }
 
@@ -304,7 +329,8 @@ const es = new EventSource("/api/stream");
 es.onopen = () => $("#live").classList.add("on");
 es.onerror = () => $("#live").classList.remove("on");
 ["headline", "judgment", "alert"].forEach((ev) => es.addEventListener(ev, () => { clearTimeout(t); t = setTimeout(() => { load(); loadStats(); }, 800); }));
-load(); loadStats(); loadTrack().then(renderDetail);
+load(); loadStats(); loadTop(); loadTrack().then(renderDetail);
+setInterval(loadTop, 60000);
 setInterval(loadStats, 15000);
 setInterval(loadTrack, 60000);
 setInterval(() => { load(); }, 60000);

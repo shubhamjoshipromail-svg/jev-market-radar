@@ -163,10 +163,10 @@ def process_headline(conn, headline_id: int, k: int = PREFILTER_K) -> list[int]:
                 continue
             cur = conn.execute(
                 "INSERT OR REPLACE INTO judgments (headline_id, market_id, prefilter_rank, relevant, same_period, effect,"
-                " effect_probs, effect_conf, strength, strength_conf, yes_price_at, latency_ms, input_tokens, cost_usd,"
-                " model, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " effect_probs, effect_conf, strength, strength_conf, magnitude, yes_price_at, latency_ms, input_tokens,"
+                " cost_usd, model, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (headline_id, m["id"], rank, j["relevant"], j["same_period"], j["effect"], j["effect_probs"], j["effect_conf"],
-                 j["strength"], j["strength_conf"], m["yes_price"], j["latency_ms"], j["input_tokens"],
+                 j["strength"], j["strength_conf"], j["magnitude"], m["yes_price"], j["latency_ms"], j["input_tokens"],
                  j["cost_usd"], j["model"], now()),
             )
             ids.append(cur.lastrowid)

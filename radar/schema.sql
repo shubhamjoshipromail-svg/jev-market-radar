@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS judgments (
   effect_conf   REAL,
   strength      REAL,                      -- 0..2
   strength_conf REAL,
+  magnitude     REAL,                      -- 0 small .. 2 decisive (size of the odds change)
   yes_price_at  REAL,                      -- market price when judged
   latency_ms    INTEGER,
   input_tokens  INTEGER,

@@ -16,6 +16,7 @@ MIGRATIONS = [
     ("headlines", "dup_of", "INTEGER"),
     ("headlines", "search_terms", "TEXT"),
     ("alerts", "why", "TEXT"),
+    ("judgments", "magnitude", "REAL"),
 ]
 
 

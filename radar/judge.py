@@ -4,7 +4,7 @@ import json
 from radar import jev
 
 # Bump on any change to QUESTIONS; stored per judgment so the alert log can be split by prompt version.
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"  # v3: + magnitude
 
 EFFECTS = ["resolves_yes", "resolves_no", "raises_yes", "lowers_yes", "no_effect"]
 
@@ -48,6 +48,19 @@ QUESTIONS = {
             "true": "Same meeting / window / deadline as the market, or the market names no specific period.",
             "false": "The headline concerns a different meeting, date window, or edition.",
         },
+    },
+    "magnitude": {
+        "type": "score",
+        "instructions": (
+            "Assume `headline` is accurate. How big a change does it make to the chance that the market resolves "
+            "to `market.yes_side`, reading `market.rules` literally? Judge only the size of the change, not its "
+            "direction: a big move toward NO is as large as a big move toward YES."
+        ),
+        "criteria": [
+            "Small: background or one minor factor among many; the outcome is about as open as it was before.",
+            "Clear: a meaningful development a trader would adjust for, but the outcome is still genuinely open.",
+            "Decisive: the deciding condition in `market.rules` is now met, ruled out, or all but certain.",
+        ],
     },
     "strength": {
         "type": "score",
@@ -98,6 +111,7 @@ async def judge_pair(http, headline: dict, market: dict) -> dict:
         "effect_probs": json.dumps(a["effect"].get("probabilities", {})),
         "effect_conf": a["effect"].get("confidence"),
         "strength": a["strength"]["score"],
+        "magnitude": a["magnitude"]["score"],
         "strength_conf": a["strength"].get("confidence"),
         "latency_ms": res["latency_ms"],
         "input_tokens": res["usage"].get("input_tokens"),
