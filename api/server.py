@@ -6,6 +6,7 @@ Run the API with ``uvicorn api.server:app`` and the worker with
 from __future__ import annotations
 
 import argparse
+import html
 import asyncio
 import json
 import sqlite3
@@ -16,7 +17,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -345,6 +346,59 @@ def worker_loop(poll_seconds: float = 1.0) -> None:
                 time.sleep(poll_seconds)
     finally:
         conn.close()
+
+
+_EFFECT = {"resolves_yes": "settles it as YES", "raises_yes": "makes YES more likely",
+           "resolves_no": "settles it as NO", "lowers_yes": "makes YES less likely"}
+
+
+@app.get("/a/{alert_id}", response_class=HTMLResponse)
+def share_alert(alert_id: int, request: Request) -> HTMLResponse:
+    """Server-rendered page for one alert, so link previews (iMessage, Slack, X) show the story, not a blank app."""
+    with closing(connect()) as conn:
+        r = conn.execute(
+            "SELECT a.*, j.effect, j.strength, h.title, h.source, h.url AS h_url, h.fetched_at, m.question, m.url AS m_url,"
+            " m.yes_price, m.outcomes FROM alerts a JOIN judgments j ON j.id=a.judgment_id JOIN headlines h ON h.id=a.headline_id"
+            " JOIN markets m ON m.id=a.market_id WHERE a.id=?", (alert_id,)).fetchone()
+    if not r:
+        raise HTTPException(status_code=404, detail="alert not found")
+    e = html.escape
+    yes = (json.loads(r["outcomes"] or "[]") or ["Yes"])[0]
+    yes = "YES" if str(yes).lower() == "yes" else str(yes)
+    effect = _EFFECT.get(r["effect"], "affects this market").replace("YES", yes)
+    at, now_p = r["price_at_alert"], r["yes_price"]
+    moved = (now_p - at) * r["direction"] if at is not None and now_p is not None else 0
+    from datetime import datetime, timezone
+    age_min = (datetime.now(timezone.utc) - datetime.fromisoformat(r["created_at"])).total_seconds() / 60
+    label = ("What-if (pasted, not live news)" if r["source"] == "paste" else "Already priced in" if moved >= 0.02 else "No reaction" if age_min > 30
+             else "Settled, price lagging" if r["kind"] == "stale_price" else "Early")
+    cents = lambda p: "–" if p is None else f"{p * 100:.1f}¢"
+    solid = "Confirmed news" if (r["strength"] or 0) >= 1.4 else "Reported, not final" if (r["strength"] or 0) >= 0.7 else "Rumour"
+    base = str(request.base_url).rstrip("/")
+    title = f"{label}: {r['question']}"
+    desc = f"“{r['title']}” {effect}. {yes} was {cents(at)} at the headline, {cents(now_p)} now."
+    body = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{e(title)}</title><meta name="description" content="{e(desc)}">
+<meta property="og:type" content="article"><meta property="og:title" content="{e(title)}"><meta property="og:description" content="{e(desc)}">
+<meta property="og:image" content="{base}/media/poster.png"><meta property="og:url" content="{base}/a/{alert_id}">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{e(title)}"><meta name="twitter:description" content="{e(desc)}">
+<meta name="twitter:image" content="{base}/media/poster.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css"><style>.share{{max-width:640px;margin:40px auto;padding:0 16px}}.share .lead{{color:var(--ink-3);font-size:13px;margin:0 0 10px}}
+.share .foot{{margin-top:22px;font-size:13px;color:var(--ink-2)}}.share .foot a{{color:inherit}}</style></head><body>
+<main class="share"><p class="lead">Radar · news → Polymarket, judged by Jev</p>
+<article class="acard v-{'whatif' if label.startswith('What') else 'priced' if label.startswith('Already') else 'quiet' if label.startswith('No') else 'settled' if label.startswith('Settled') else 'early'}">
+<header><span class="vlabel v-{'whatif' if label.startswith('What') else 'priced' if label.startswith('Already') else 'quiet' if label.startswith('No') else 'settled' if label.startswith('Settled') else 'early'}">{e(label)}</span>
+<span class="vdesc">{e(r['source'].split(':', 1)[-1])} · {e((r['fetched_at'] or '')[:16].replace('T', ' '))} UTC</span></header>
+<p class="whyline" style="margin:10px 0 0">“{e(r['title'])}”</p>
+<h3><a href="{e(r['m_url'] or '#')}">{e(r['question'])}</a></h3>
+<dl class="facts"><div><dt>Effect</dt><dd class="{'up' if r['direction'] > 0 else 'down'}">{'▲' if r['direction'] > 0 else '▼'} {e(effect[0].upper() + effect[1:])}</dd></div>
+<div><dt>Price of {e(yes)}</dt><dd class="mono">{cents(at)} at the headline → {cents(now_p)} now</dd></div><div><dt>How solid</dt><dd>{solid}</dd></div></dl>
+{f'<p class="whyline">{e(r["why"])}</p>' if r["why"] else ''}
+<div class="acts"><a class="btn primary" href="{e(r['m_url'] or '#')}">Open on Polymarket ↗</a>{f'<a class="btn" href="{e(r["h_url"])}">Read the source ↗</a>' if r["h_url"] else ''}</div></article>
+<p class="foot">Radar reads the news, checks every live Polymarket market's rules, and flags the ones the news moves before the price catches up.
+<a href="/">How it works</a> · <a href="/board.html">Live board</a>. Information, not trading advice.</p></main></body></html>"""
+    return HTMLResponse(body)
 
 
 # Mount last so /api/* routes always win. StaticFiles serves web/index.html at / when present.

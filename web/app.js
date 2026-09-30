@@ -1,7 +1,7 @@
 // Radar dashboard: pulse chart + feed + detail. Data contract: PLAN.md (/api/feed?judged=1, /api/stats, /api/stream).
 const $ = (s, r = document) => r.querySelector(s);
 const NS = "http://www.w3.org/2000/svg";
-const S = { feed: [], sel: null, hours: 6, filter: "all", minRel: 0.7, seen: new Set(), open: new Set(), votes: {} };
+const S = { feed: [], sel: null, hours: 6, filter: "alerts", minRel: 0.7, seen: new Set(), open: new Set(), votes: {} };
 const DIR = { resolves_yes: 1, raises_yes: 1, resolves_no: -1, lowers_yes: -1, no_effect: 0 };
 const LABEL = { resolves_yes: "Resolves YES", raises_yes: "YES more likely", resolves_no: "Resolves NO",
   lowers_yes: "YES less likely", no_effect: "No effect" };
@@ -16,6 +16,38 @@ const src = (h) => (h.source || "").replace(/^(rss|bluesky):/, "").replace(/\.(c
 const svg = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag);
   for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; };
 
+// ---- plain-language layer: what an alert means for a user, not how Jev scored it -----------------
+const VERDICT = {
+  whatif: { t: "What-if", d: "You pasted this headline. This is what it would move if it were true; it isn't live news.", p: 1.5 },
+  settled: { t: "Settled, price lagging", d: "The news basically decides this bet, and the price hasn't caught up.", p: 0 },
+  early: { t: "Early", d: "Real news on a traded bet. The market hasn't reacted yet.", p: 1 },
+  quiet: { t: "No reaction", d: "30+ minutes and the price hasn't moved. Traders didn't act on this.", p: 3 },
+  priced: { t: "Already priced in", d: "The price already moved the way we expected. You're late on this one.", p: 2 },
+  fyi: { t: "FYI", d: "Related, but not alert-worthy: thin market, weak news, or already near its limit.", p: 4 },
+};
+const EFFECT_SENTENCE = { resolves_yes: "Settles it as YES", raises_yes: "Makes YES more likely", resolves_no: "Settles it as NO",
+  lowers_yes: "Makes YES less likely", no_effect: "No real effect" };
+const plainStrength = (s) => (s >= 1.4 ? "Confirmed news" : s >= 0.7 ? "Reported, not final" : "Rumour or opinion");
+function verdict(j) {
+  if (j.alert && j._paste) return "whatif";
+  if (!j.alert) return j.relevant >= S.minRel && DIR[j.effect] ? "fyi" : null;
+  const at = j.alert.price_at_alert ?? j.yes_price_at, now = j.market.yes_price;
+  const moved = now != null && at != null ? (now - at) * j.alert.direction : 0;
+  if (moved >= 0.02) return "priced";
+  const age = (Date.now() - new Date(j.alert.created_at || 0)) / 60e3;
+  if (age > 30) return "quiet"; // "early" only means something while the news is fresh
+  return j.alert.kind === "stale_price" ? "settled" : "early";
+}
+function yesName(j) { const o = j.market.outcomes; return o && o[0] && o[0] !== "Yes" ? o[0] : "YES"; }
+function trackLine(kind) {
+  const t = S.track?.[kind];
+  if (!t || t.moved < 5) return "Track record: still collecting (fewer than 5 similar alerts with a price move).";
+  return `Track record: similar alerts moved the predicted way ${t.right} of ${t.moved} times.`;
+}
+async function loadTrack() {
+  try { const s = await api("/api/scorecard"); S.track = Object.fromEntries(s.by_kind.map((k) => [k.key, k])); } catch {}
+}
+
 async function api(path, opts) { const r = await fetch(path, opts); if (!r.ok) throw new Error(await r.text()); return r.json(); }
 
 // ---- derived per-headline numbers --------------------------------------------------------------
@@ -28,6 +60,7 @@ function summarize(it) {
 // ---- data --------------------------------------------------------------------------------------
 async function load() {
   try { S.feed = (await api("/api/feed?judged=true&limit=300")).filter(Boolean); } catch (e) { console.warn(e); }
+  for (const it of S.feed) for (const j of it.judgments) j._paste = it.headline.source === "paste";
   if (S.sel == null && S.feed.length) S.sel = (S.feed.find((it) => it.judgments.some((j) => j.alert)) || S.feed[0]).headline.id;
   renderAll();
 }
@@ -101,13 +134,14 @@ function miniBar(up, down) {
   return r.outerHTML;
 }
 function renderFeed() {
-  const list = S.feed.map((it) => ({ it, ...summarize(it) })).filter((d) => S.filter === "all" || d.alerts);
+  const list = S.feed.map((it) => ({ it, ...summarize(it) })).filter((d) => S.filter === "all" || d.it.judgments.some((j) => ["settled", "early"].includes(verdict(j)) || (verdict(j) === "whatif" && Date.now() - new Date(d.it.headline.fetched_at) < 3600e3)));
   const ol = $("#feed");
-  if (!list.length) { ol.innerHTML = `<li class="empty">${S.filter === "alerts" ? "No alerts yet." : "Waiting for headlines…"}</li>`; return; }
+  if (!list.length) { ol.innerHTML = `<li class="empty">${S.filter === "alerts" ? "Nothing needs a look right now. That\u2019s normal: alerts are rare on purpose. Switch to All headlines, or try an example above." : "Waiting for headlines…"}</li>`; return; }
   ol.innerHTML = list.map((d) => { const h = d.it.headline;
     return `<li data-id="${h.id}" class="${h.id === S.sel ? "sel" : ""} ${S.seen.size && !S.seen.has(h.id) ? "fresh" : ""}">
       <button type="button"><span class="t">${hhmm(h.fetched_at)}</span><span class="h">${esc(h.title)}</span>
-      <span class="mini">${miniBar(d.up, d.down)}${d.alerts ? `<span class="badge">${d.alerts} ALERT${d.alerts > 1 ? "S" : ""}</span>` : ""}</span>
+      <span class="mini">${miniBar(d.up, d.down)}${(() => { const best = d.it.judgments.map(verdict).filter((v) => v && v !== "fyi").sort((x, y) => VERDICT[x].p - VERDICT[y].p)[0];
+        return best ? `<span class="vlabel v-${best}">${VERDICT[best].t}</span>` : ""; })()}</span>
       <span class="s">${esc(src(h))} · ${d.rel.length} of ${d.it.judgments.length} markets relevant</span></button></li>`; }).join("");
   list.forEach((d) => S.seen.add(d.it.headline.id));
 }
@@ -143,19 +177,29 @@ function renderDetail() {
   const box = $("#detail"), it = S.feed.find((x) => x.headline.id === S.sel);
   if (!it) { box.innerHTML = `<p class="none">Select a headline, or paste one above.</p>`; return; }
   const h = it.headline, d = summarize(it);
-  const js = [...it.judgments].sort((a, b) => (!!b.alert - !!a.alert) || b.relevant - a.relevant);
-  const shown = js.filter((j) => j.relevant >= S.minRel || j.alert);
+  const js = [...it.judgments].sort((a, b) => (VERDICT[verdict(a)]?.p ?? 9) - (VERDICT[verdict(b)]?.p ?? 9) || b.relevant - a.relevant);
+  const alerts = js.filter((j) => j.alert), rest = js.filter((j) => !j.alert && j.relevant >= S.minRel);
+  const shown = rest;
+  const look = alerts.filter((j) => ["settled", "early"].includes(verdict(j))).length;
+  const summary = h.source === "paste" && alerts.length
+    ? `If this were true, it would move <b>${alerts.length}</b> traded bet${alerts.length > 1 ? "s" : ""}. Nothing is pushed to phones for pasted headlines.`
+    : alerts.length
+    ? `This affects <b>${alerts.length}</b> traded bet${alerts.length > 1 ? "s" : ""}${look ? `, <b>${look}</b> worth a look now` : ", none still worth acting on"}.`
+    : d.rel.length ? `Related to <b>${d.rel.length}</b> bet${d.rel.length > 1 ? "s" : ""}, but nothing alert-worthy: thin markets, weak news, or already priced in.`
+      : "No live bet is really affected by this headline.";
   const lat = it.judgments.map((j) => j.latency_ms).sort((a, b) => a - b);
-  S.firstAlert = shown.find((j) => j.alert)?.id; // only the top alert opens by default
+  S.firstAlert = null;
   box.innerHTML = `<div class="d-head">
       <div class="meta"><span>${esc(src(h))}${h.also_reported_by?.length ? ` · also ${h.also_reported_by.map(src).map(esc).join(", ")}` : ""}</span><span>${hhmm(h.fetched_at)} · ${ago(h.fetched_at)} ago</span>
       ${h.url ? `<a href="${esc(h.url)}" target="_blank" rel="noopener">source ↗</a>` : ""}</div>
       <h1>${esc(h.title)}</h1>
+      <p class="summary">${summary}</p>
       <div class="d-kpis"><span><b>${it.judgments.length}</b>markets judged</span><span><b>${d.rel.length}</b>relevant</span>
       <span><b>${d.up}</b>toward YES</span><span><b>${d.down}</b>toward NO</span><span><b>${d.alerts}</b>alerts</span>
       <span><b>${lat.length ? lat[lat.length >> 1] : "–"}ms</b>median call</span></div></div>
-    ${shown.length ? `<ol class="mk">${shown.map((j) => row(j)).join("")}</ol>`
-      : `<p class="none">None of the ${it.judgments.length} candidate markets cleared relevance ${S.minRel.toFixed(2)}.</p>`}`;
+    ${alerts.length ? `<ol class="mk cards">${alerts.map(card).join("")}</ol>` : ""}
+    ${shown.length ? `<h2 class="sub-h">Also related (FYI)</h2><ol class="mk">${shown.map((j) => row(j)).join("")}</ol>`
+      : alerts.length ? "" : `<p class="none">None of the ${it.judgments.length} candidate markets cleared relevance ${S.minRel.toFixed(2)}.</p>`}`;
 }
 function row(j) {
   const dir = DIR[j.effect] || 0, a = j.alert, open = S.open.has(j.id) || (j.id === S.firstAlert && !S.open.has(-j.id));
@@ -184,6 +228,35 @@ function row(j) {
     </div></li>`;
 }
 
+function card(j) {
+  const v = verdict(j), V = VERDICT[v], a = j.alert, yes = yesName(j);
+  const at = a.price_at_alert ?? j.yes_price_at, now = j.market.yes_price;
+  const dir = DIR[j.effect] || 0, open = S.open.has(j.id);
+  const eff = EFFECT_SENTENCE[j.effect].replace("YES", yes);
+  return `<li data-j="${j.id}" class="card-li ${open ? "open" : ""}"><article class="acard v-${v}">
+    <header><span class="vlabel v-${v}">${V.t}</span><span class="vdesc">${V.d}</span></header>
+    <h3><a href="${esc(j.market.url)}" target="_blank" rel="noopener">${esc(j.market.question)}</a></h3>
+    <dl class="facts">
+      <div><dt>Effect</dt><dd class="${dir > 0 ? "up" : "down"}">${dir > 0 ? "▲" : "▼"} ${esc(eff)}</dd></div>
+      <div><dt>Price of ${esc(yes)}</dt><dd class="mono">${cents(at)} at the headline → ${cents(now)} now</dd></div>
+      <div><dt>How solid</dt><dd>${plainStrength(j.strength)}</dd></div>
+    </dl>
+    ${a.why ? `<p class="whyline">${esc(a.why)}</p>` : ""}
+    <p class="track">${trackLine(a.kind)}</p>
+    <div class="acts">
+      <a class="btn primary" href="${esc(j.market.url)}" target="_blank" rel="noopener">Open on Polymarket ↗</a>
+      <button class="btn share" type="button" data-share="${a.id}">Copy share link</button>
+      <span class="vote" data-alert="${a.id}"><button data-v="1" class="${S.votes[a.id] === 1 ? "on" : ""}">Useful</button><button data-v="-1" class="${S.votes[a.id] === -1 ? "on" : ""}">Wrong</button></span>
+      <button class="btn ghost more" type="button">${open ? "Hide details" : "Details"}</button>
+    </div>
+  </article>
+  <div class="mk-more">
+    <div><div class="side"><h3>Resolution rules</h3></div><div class="rules">${esc(j.market.rules)}</div></div>
+    <div class="side"><h3>How Jev split its answer</h3>${dist(j.effect_probs)}<h3>Price since alert</h3>${reaction(a)}
+      <p class="s">relevance ${j.relevant.toFixed(2)} · confidence ${(j.effect_conf ?? 0).toFixed(2)} · strength ${(j.strength ?? 0).toFixed(1)}/2 · ${j.latency_ms}ms</p></div>
+  </div></li>`;
+}
+
 function renderAll() { renderPulse(); renderFeed(); renderDetail(); }
 function select(id) { S.sel = id; renderAll(); if (innerWidth < 900) $("#detail").scrollIntoView({ behavior: "smooth" }); }
 
@@ -194,6 +267,13 @@ $("#detail").addEventListener("click", async (e) => {
   if (v) { const id = +v.parentElement.dataset.alert, vote = +v.dataset.v; S.votes[id] = vote; renderDetail();
     try { await api("/api/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ alert_id: id, vote }) }); } catch {}
     return; }
+  const sh = e.target.closest("[data-share]");
+  if (sh) { const url = `${location.origin}/a/${sh.dataset.share}`;
+    try { await navigator.clipboard.writeText(url); sh.textContent = "Link copied"; } catch { prompt("Share link", url); }
+    setTimeout(() => (sh.textContent = "Copy share link"), 1800); return; }
+  const more = e.target.closest(".more");
+  if (more) { const li = more.closest("li"), id = +li.dataset.j, isOpen = li.classList.toggle("open");
+    more.textContent = isOpen ? "Hide details" : "Details"; S.open.delete(id); S.open.add(isOpen ? id : -id); return; }
   const r = e.target.closest(".mk-row"); if (!r) return;
   const li = r.parentElement, id = +li.dataset.j, isOpen = li.classList.toggle("open");
   S.open.delete(id); S.open.delete(-id); S.open.add(isOpen ? id : -id);
@@ -212,6 +292,9 @@ $("#cmd").addEventListener("submit", async (e) => {
   } catch (err) { b.textContent = "Failed"; console.error(err); }
   finally { b.disabled = false; setTimeout(() => (b.textContent = "Judge"), 2200); }
 });
+document.querySelectorAll("[data-example]").forEach((b) => b.addEventListener("click", () => {
+  $("#cmdInput").value = b.dataset.example; $("#cmd").requestSubmit();
+}));
 addEventListener("keydown", (e) => { if (e.key === "/" && document.activeElement.tagName !== "INPUT") { e.preventDefault(); $("#cmdInput").focus(); } });
 addEventListener("resize", () => renderPulse());
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderAll);
@@ -221,6 +304,7 @@ const es = new EventSource("/api/stream");
 es.onopen = () => $("#live").classList.add("on");
 es.onerror = () => $("#live").classList.remove("on");
 ["headline", "judgment", "alert"].forEach((ev) => es.addEventListener(ev, () => { clearTimeout(t); t = setTimeout(() => { load(); loadStats(); }, 800); }));
-load(); loadStats();
+load(); loadStats(); loadTrack().then(renderDetail);
 setInterval(loadStats, 15000);
+setInterval(loadTrack, 60000);
 setInterval(() => { load(); }, 60000);

@@ -32,7 +32,7 @@ def pending(conn):
         "SELECT a.id, a.headline_id, a.kind, a.why, a.direction, a.price_at_alert, j.effect, j.strength,"
         " h.title, h.source, h.url AS h_url, m.question, m.url AS m_url"
         " FROM alerts a JOIN judgments j ON j.id=a.judgment_id JOIN headlines h ON h.id=a.headline_id"
-        " JOIN markets m ON m.id=a.market_id WHERE a.notified=0 ORDER BY a.id").fetchall()
+        " JOIN markets m ON m.id=a.market_id WHERE a.notified=0 AND h.source<>'paste' ORDER BY a.id").fetchall()
     by_headline = {}
     for r in rows:
         by_headline.setdefault(r["headline_id"], []).append(dict(r))

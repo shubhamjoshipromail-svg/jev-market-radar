@@ -155,3 +155,42 @@ button, input { font: inherit; color: inherit; }
   .mk-more { grid-template-columns: 1fr; padding: 0 14px 14px 50px; }
 }
 .q .fx .why { flex-basis: 100%; order: -1; color: var(--ink); font-size: 13px; margin: 2px 0 2px; }
+
+/* ---- plain-language alert cards ---- */
+.examples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 24px 0; font-size: 12px; color: var(--ink-3); }
+.examples button { border: 1px solid var(--line-2); background: var(--surface); color: var(--ink-2); border-radius: 999px; padding: 4px 11px; font-size: 12px; cursor: pointer; }
+.examples button:hover { color: var(--ink); border-color: var(--ink-3); }
+.summary { margin: -4px 0 10px; font-size: 15px; color: var(--ink-2); }
+.summary b { color: var(--ink); font-weight: 600; }
+.sub-h { font-size: 12px; font-weight: 500; color: var(--ink-3); margin: 0; padding: 14px 20px 6px; border-top: 1px solid var(--line); }
+.mk.cards { padding: 12px 16px 4px; display: grid; gap: 12px; }
+.mk.cards > li { border: 0; }
+.acard { border: 1px solid var(--line-2); border-radius: 8px; padding: 14px 16px; background: var(--raise); }
+.acard.v-settled, .acard.v-early { border-left: 3px solid var(--warn); }
+.acard.v-priced { opacity: .8; }
+.acard header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.vlabel { font: 600 11px var(--mono); letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
+.vlabel.v-settled { background: var(--bad); color: #fff; }
+.vlabel.v-early { background: var(--warn); color: #1a1400; }
+.vlabel.v-whatif { background: var(--yes); color: #fff; }
+.acard.v-whatif { border-left: 3px solid var(--yes); }
+.vlabel.v-priced, .vlabel.v-quiet { background: var(--mid); color: var(--ink-2); }
+.acard.v-quiet { opacity: .8; }
+.vlabel.v-fyi { border: 1px solid var(--line-2); color: var(--ink-3); }
+.vdesc { font-size: 12px; color: var(--ink-3); }
+.acard h3 { font-size: 16px; font-weight: 600; line-height: 1.35; margin: 8px 0 10px; letter-spacing: -0.01em; }
+.acard h3 a { color: inherit; text-decoration: none; } .acard h3 a:hover { text-decoration: underline; }
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, auto)); justify-content: start; gap: 6px 28px; margin: 0; }
+.facts dt { font-size: 11px; color: var(--ink-3); }
+.facts dd { margin: 2px 0 0; font-size: 14px; font-weight: 500; }
+.facts dd.up { color: var(--yes); } .facts dd.down { color: var(--no); }
+.whyline { margin: 12px 0 0; font-size: 14px; line-height: 1.45; }
+.track { margin: 6px 0 0; font-size: 12px; color: var(--ink-3); }
+.acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.btn { font-size: 12px; border-radius: 6px; padding: 5px 11px; cursor: pointer; text-decoration: none; border: 1px solid var(--line-2); background: transparent; color: var(--ink-2); }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn.ghost { margin-left: auto; border-color: transparent; }
+.acts .vote { margin: 0; }
+.mk.cards .mk-more { padding: 12px 4px 4px; }
+.mini .vlabel { font-size: 9px; padding: 1px 5px; }
+@media (max-width: 700px) { .facts { grid-template-columns: 1fr; } .examples { margin: 10px 16px 0; } .btn.ghost { margin-left: 0; } }

@@ -24,6 +24,14 @@
   <input id="cmdInput" placeholder="Paste a headline to judge it against every live market">
   <button type="submit" id="cmdBtn">Judge</button>
 </form>
+<div class="examples" aria-label="Try an example">
+  <span>Try a what-if:</span>
+  <button type="button" data-example="Federal Reserve cuts interest rates by 50 basis points at its October meeting">Fed cuts rates 0.5%</button>
+  <button type="button" data-example="Anthropic confidentially files for an IPO with the SEC">Anthropic files for IPO</button>
+  <button type="button" data-example="Zelensky and Putin agree to meet for ceasefire talks next month">Ukraine ceasefire talks</button>
+  <button type="button" data-example="Aaron Judge placed on injured list, out for the playoffs">Yankees star injured</button>
+  <button type="button" data-example="Kamala Harris announces 2028 presidential run">Harris runs in 2028</button>
+</div>
 
 <section class="pulse" aria-label="Headline impact over time">
   <div class="pulse-head">
@@ -44,7 +52,7 @@
   <section class="feed-col">
     <div class="feed-head">
       <div class="seg" id="filter" role="group" aria-label="Filter">
-        <button data-f="all" class="on">All judged</button><button data-f="alerts">Alerts only</button>
+        <button data-f="alerts" class="on">Worth a look</button><button data-f="all">All headlines</button>
       </div>
       <label class="rel">Relevance ≥ <output id="minRelV">0.70</output>
         <input type="range" id="minRel" min="0.3" max="0.95" step="0.05" value="0.7"></label>
