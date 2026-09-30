@@ -1,4 +1,4 @@
-"""Cheap-LLM helpers (OpenAI gpt-5.6-luna, reasoning off, ~1.3 s). Never on the per-market path:
+"""Cheap-LLM helpers (OpenAI gpt-6-luna, reasoning off, ~1.3 s). Never on the per-market path:
 once per headline (search terms for the prefilter) and once per alert (a one-line "why").
 Both degrade gracefully: no key, timeout, or error -> None, and the pipeline carries on without them."""
 import json
@@ -8,7 +8,7 @@ import httpx
 
 from radar import config  # noqa: F401  (loads .env)
 
-MODEL = os.getenv("RADAR_LLM_MODEL", "gpt-5.6-luna")
+MODEL = os.getenv("RADAR_LLM_MODEL", "gpt-6-luna")
 URL = "https://api.openai.com/v1/chat/completions"
 TIMEOUT = float(os.getenv("RADAR_LLM_TIMEOUT", "4"))
 
